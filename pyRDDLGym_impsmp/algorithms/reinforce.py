@@ -68,7 +68,7 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, n_shards, epsilon,
         """
         key, subkey = jax.random.split(key)
         states, actions, rewards = model.rollout(subkey, theta)
-        advantages = adv_estimator.estimate(states, actions, rewards)
+        advantages = adv_estimator.estimate(subkey, states, actions, rewards)
         pi_inv = 1 / (policy.pdf(subkey, theta, states, actions) + epsilon)
         dpi = jacobian(subkey, theta, states, actions)
         dlogpi = jax.tree_util.tree_map(lambda dpi_term: weighting_map(pi_inv, dpi_term), dpi)
@@ -223,5 +223,6 @@ def reinforce(key, n_iters, config, bijector, policy, sampler, optimizer, models
     import matplotlib.pyplot as plt
     plt.plot(range(n_iters), algo_stats['reward_mean'])
     plt.savefig('plot.png')
+    print('saved')
 
     return key, algo_stats

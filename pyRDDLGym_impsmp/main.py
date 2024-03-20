@@ -72,7 +72,8 @@ def main(config):
     # configure the model(s)
     # (note: frequently, the training and evaluation models are configured separately,
     # even if both are not relaxed, because just-in-time compiled (jitted) functions
-    # require the shapes of the arguments to be immutable)
+    # require the shapes of the arguments to be immutable. Training and evaluation models
+    # tend to have different batch sizes, therefore different rollout shapes)
     model_config = config['models']
     model_cls = registry.model_lookup_table[model_config['type']]
     model_params = model_config['params']
@@ -117,7 +118,12 @@ def main(config):
     train_adv_estimator_config = config['train_adv_estimator']
     train_adv_estimator_cls = registry.advantage_estimator_lookup_table[train_adv_estimator_config['type']]
     train_adv_estimator_params = train_adv_estimator_config['params']
-    train_adv_estimator = train_adv_estimator_cls(**train_adv_estimator_params)
+    key, subkey = jax.random.split(key)
+    train_adv_estimator = train_adv_estimator_cls(
+        key=subkey,
+        state_dim=state_dim,
+        action_dim=action_dim,
+        **train_adv_estimator_params)
 
     # run
     with jax.disable_jit(disable=not enable_jit):
