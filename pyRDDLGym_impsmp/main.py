@@ -25,6 +25,7 @@ def main(config):
         'configuration_file': deepcopy(config)
     }
 
+    state_dim = config['state_dim']
     action_dim = config['action_dim']
     n_iters = config['n_iters']
     batch_size = config['algorithm']['params']['batch_size']
@@ -50,7 +51,7 @@ def main(config):
 
     # configure the bijector
     bijector_config = config['bijector']
-    bijector_cls = registry.bijector_lookup_table[bijector_config['id']]
+    bijector_cls = registry.bijector_lookup_table[bijector_config['type']]
     bijector_params = bijector_config['params']
     bijector = bijector_cls(
         action_dim=action_dim,
@@ -58,11 +59,12 @@ def main(config):
 
     # configure the policy
     policy_config = config['policy']
-    policy_cls = registry.policy_lookup_table[policy_config['id']]
+    policy_cls = registry.policy_lookup_table[policy_config['type']]
     policy_params = policy_config['params']
     key, subkey = jax.random.split(key)
     policy = policy_cls(
         key=subkey,
+        state_dim=state_dim,
         action_dim=action_dim,
         bijector=bijector,
         **policy_params)
@@ -72,7 +74,7 @@ def main(config):
     # even if both are not relaxed, because just-in-time compiled (jitted) functions
     # require the shapes of the arguments to be immutable)
     model_config = config['models']
-    model_cls = registry.model_lookup_table[model_config['id']]
+    model_cls = registry.model_lookup_table[model_config['type']]
     model_params = model_config['params']
     model_specs = model_params.pop('specs')
     models = {}
@@ -88,13 +90,13 @@ def main(config):
 
     # configure the optimizer
     optimizer_config = config['optimizer']
-    optimizer_cls = registry.optimizer_lookup_table[optimizer_config['id']]
+    optimizer_cls = registry.optimizer_lookup_table[optimizer_config['type']]
     optimizer_params = optimizer_config['params']
     optimizer = optimizer_cls(**optimizer_params)
 
     # configure the algorithm
     algorithm_config = config['algorithm']
-    algorithm_fn = registry.algorithm_lookup_table[algorithm_config['id']]
+    algorithm_fn = registry.algorithm_lookup_table[algorithm_config['type']]
     algorithm_params = algorithm_config['params']
 
     # configure the sampler (if used)
@@ -111,6 +113,12 @@ def main(config):
     else:
         sampler = None
 
+    #configure the training model advantage estimator
+    train_adv_estimator_config = config['train_adv_estimator']
+    train_adv_estimator_cls = registry.advantage_estimator_lookup_table[train_adv_estimator_config['type']]
+    train_adv_estimator_params = train_adv_estimator_config['params']
+    train_adv_estimator = train_adv_estimator_cls(**train_adv_estimator_params)
+
     # run
     with jax.disable_jit(disable=not enable_jit):
         key, algo_stats = algorithm_fn(
@@ -121,7 +129,8 @@ def main(config):
             policy=policy,
             sampler=sampler,
             optimizer=optimizer,
-            models=models)
+            models=models,
+            train_adv_estimator=train_adv_estimator)
 
     # save stats dump
     save_to = config.get('save_to')

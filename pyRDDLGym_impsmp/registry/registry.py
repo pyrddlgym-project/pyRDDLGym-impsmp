@@ -1,12 +1,21 @@
 import optax
 from tensorflow_probability.substrates import jax as tfp
+import pyRDDLGym_impsmp.advantage_estimators
 import pyRDDLGym_impsmp.algorithms
 import pyRDDLGym_impsmp.bijectors
 import pyRDDLGym_impsmp.models
 import pyRDDLGym_impsmp.policies
 import pyRDDLGym_impsmp.samplers
 #import pyRDDLGym.Examples.Traffic.Calibration.instances.inflow_calibration_models
-#import pyRDDLGym.Examples.SumOfHalfSpaces.instances.model
+
+advantage_estimator_lookup_table = {
+    'total_traj_reward': pyRDDLGym_impsmp.advantage_estimators.estimators.TotalTrajRewardAdvEstimator,
+    'future_traj_reward': pyRDDLGym_impsmp.advantage_estimators.estimators.FutureTrajRewardAdvEstimator,
+    'future_traj_reward_w_constant_baseline': pyRDDLGym_impsmp.advantage_estimators.estimators.FutureTrajRewardWConstantBaselineAdvEstimator,
+    'Q_function': pyRDDLGym_impsmp.advantage_estimators.estimators.QFunctionAdvEstimator,
+    'A_function': pyRDDLGym_impsmp.advantage_estimators.estimators.AFunctionAdvEstimator,
+    'TD_residual': pyRDDLGym_impsmp.advantage_estimators.estimators.TDResidualAdvEstimator,
+}
 
 algorithm_lookup_table = {
     'reinforce': pyRDDLGym_impsmp.algorithms.reinforce.reinforce,
@@ -56,6 +65,7 @@ optimizer_lookup_table = {
 
 policy_lookup_table = {
     'multivar_normal_with_linear_parametrization': pyRDDLGym_impsmp.policies.normal.MultivarNormalLinearParametrization,
+    'multivar_normal_with_state_dependent_linear_parametrization': pyRDDLGym_impsmp.policies.normal.MultivarNormalLinearStateDependentParametrization,
     'multivar_normal_with_mlp_parametrization': pyRDDLGym_impsmp.policies.normal.MultivarNormalMLPParametrization,
 }
 
