@@ -190,7 +190,7 @@ class QFunctionAdvEstimator(AdvEstimator):
            A(s_t, a_t) = Q(s_t, a_t)
        where Q is updated to minimize the squared TD-loss.
 
-       TODO: The loss has a tendency to blow up. Sensitive to learning rates. Investigate more
+       Sensitive to learning rates!
     """
     def __init__(self, key, gamma, num_hidden_nodes_Q, target_update_freq, grad_clip_val, optimizer):
         self.gamma = gamma
@@ -230,7 +230,7 @@ class QFunctionAdvEstimator(AdvEstimator):
         estimator_state['target_update_counter'] = 0
         return estimator_state
 
-    def skip_Q_target_update(self, estimator_state):
+    def skip_update_Q_target(self, estimator_state):
         """Called when it is not time to call 'update_Q_target'"""
         return estimator_state
 
@@ -264,7 +264,7 @@ class QFunctionAdvEstimator(AdvEstimator):
         estimator_state = jax.lax.cond(
             estimator_state['target_update_counter'] > self.target_update_freq,
             self.update_Q_target,
-            self.skip_Q_target_update,
+            self.skip_update_Q_target,
             estimator_state)
 
         return advantages, estimator_state
