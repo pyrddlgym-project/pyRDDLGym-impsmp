@@ -26,7 +26,7 @@ def flatten_dJ(dJ, batch_size, n_params):
 @functools.partial(
     jax.jit,
     static_argnames=('n_shards', 'batch_size', 'epsilon', 'policy', 'model', 'adv_estimator'))
-def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, n_shards, epsilon, policy, model, adv_estimator):
+def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, n_shards, epsilon, policy, model, adv_estimator, adv_estimator_state):
     """Computes an estimate of dJ^pi over a sample of rolled out trajectories
 
         B = {tau_0, tau_1, ..., tau_{|B|-1}}
@@ -61,32 +61,37 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, n_shards, epsilon,
     batch_stats = {}
     jacobian = jax.jacrev(policy.pdf, argnums=1)
 
-    def compute_dJ_hat_summands_for_shard(key, _):
+    def compute_dJ_hat_summands_for_shard(init, _):
         """Compute dJ hat for the current sample, dividing the computation up
         into shards of size model.n_rollouts (this can be useful for fitting
         the computation into GPU VRAM, for example)
         """
+        key, adv_estimator_state = init
         key, subkey = jax.random.split(key)
         states, actions, rewards = model.rollout(subkey, theta)
-        advantages = adv_estimator.estimate(subkey, states, actions, rewards)
+        advantages, adv_estimator_state = adv_estimator.estimate(subkey, states, actions, rewards, adv_estimator_state)
         pi_inv = 1 / (policy.pdf(subkey, theta, states, actions) + epsilon)
         dpi = jacobian(subkey, theta, states, actions)
         dlogpi = jax.tree_util.tree_map(lambda dpi_term: weighting_map(pi_inv, dpi_term), dpi)
         A_weighted_dlogpi = jax.tree_util.tree_map(lambda dlogpi_term: weighting_map(advantages, dlogpi_term), dlogpi)
 
         dJ_summands = jax.tree_util.tree_map(lambda A_weighted_dlogpi_term: jnp.sum(A_weighted_dlogpi_term, axis=1), A_weighted_dlogpi)
-        return key, (actions, rewards, dJ_summands)
+        carry = (key, adv_estimator_state)
+        result = (actions, rewards, dJ_summands)
+        return carry, result
 
-    key, (actions, rewards, dJ_summands) = jax.lax.scan(
+    carry, result = jax.lax.scan(
         compute_dJ_hat_summands_for_shard,
-        key, [None] * n_shards, length=n_shards)
+        (key, adv_estimator_state), [None] * n_shards, length=n_shards)
+    (key, adv_estimator_state) = carry
+    (actions, rewards, dJ_summands) = result
 
     dJ_hat = jax.tree_util.tree_map(lambda term: jnp.mean(term, axis=(0,1)), dJ_summands)
 
     #batch_stats['dJ'] = flatten_dJ(dJ_summands, batch_size, policy.n_params)
     #batch_stats['actions'] = actions.reshape(batch_size, policy.action_dim)
 
-    return key, dJ_hat, batch_stats
+    return key, dJ_hat, adv_estimator_state, batch_stats
 
 @functools.partial(jax.jit, static_argnames=('eval_n_shards', 'eval_batch_size', 'policy', 'model'))
 def evaluate_policy(key, it, algo_stats, eval_n_shards, eval_batch_size, theta, policy, model):
@@ -144,9 +149,8 @@ def print_reinforce_report(it, algo_stats, subt0, subt1):
     print(f'Eval. reward={algo_stats["reward_mean"][it]:.3f} \u00B1 {algo_stats["reward_sterr"][it]:.3f}\n')
 
 
-def reinforce(key, n_iters, config, bijector, policy, sampler, optimizer, models, train_adv_estimator):
+def reinforce(key, n_iters, config, bijector, policy, sampler, optimizer, models, training_adv_estimator, training_adv_estimator_state):
     """Runs the REINFORCE algorithm"""
-
     action_dim = policy.action_dim
     batch_size = config['batch_size']
     eval_batch_size = config['eval_batch_size']
@@ -202,9 +206,10 @@ def reinforce(key, n_iters, config, bijector, policy, sampler, optimizer, models
 
         key, algo_stats = evaluate_policy(key, it, algo_stats, eval_n_shards, eval_batch_size, policy.theta, policy, eval_model)
 
-        key, dJ_hat, batch_stats = compute_reinforce_dJ_hat_estimate(
+        key, dJ_hat, training_adv_estimator_state, batch_stats = compute_reinforce_dJ_hat_estimate(
             key, policy.theta,
-            batch_size, n_shards, epsilon, policy, train_model, train_adv_estimator)
+            batch_size, n_shards, epsilon, policy, train_model,
+            training_adv_estimator, training_adv_estimator_state)
 
         updates, opt_state = optimizer.update(dJ_hat, opt_state)
         policy.theta = optax.apply_updates(policy.theta, updates)
