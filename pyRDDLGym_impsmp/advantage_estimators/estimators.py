@@ -196,13 +196,14 @@ class QFunctionAdvEstimator(AdvEstimator):
         self.gamma = gamma
         self.grad_clip_val = grad_clip_val
 
-        def Q(state_action_pair):
+        def Q(states, actions):
             """The Q-function is parameterized by a MLP"""
             hidden_layers = []
             for n in num_hidden_nodes_Q:
                 hidden_layers.extend([hk.Linear(n), jax.nn.relu])
             mlp = hk.Sequential(hidden_layers + [hk.Linear(1)])
-            Q_val = mlp(state_action_pair)
+            state_action_pairs = jnp.concatenate([states, actions], axis=-1)
+            Q_val = mlp(state_action_pairs)
             return Q_val
         self.Q = hk.transform(Q)
 
@@ -215,8 +216,8 @@ class QFunctionAdvEstimator(AdvEstimator):
 
     def initialize_estimator_state(self, key, state_dim, action_dim):
         estimator_state = {}
-        dummy_state_action_pair = jnp.ones(state_dim + action_dim)
-        estimator_state['Q_theta'] = self.Q.init(key, dummy_state_action_pair)
+        dummy_state, dummy_action = jnp.ones(state_dim), jnp.ones(action_dim)
+        estimator_state['Q_theta'] = self.Q.init(key, dummy_state, dummy_action)
         estimator_state['Q_theta_target'] = jax.tree_util.tree_map(lambda Q_theta_term: jnp.copy(Q_theta_term), estimator_state['Q_theta'])
         estimator_state['opt_state'] = self.optimizer.init(estimator_state['Q_theta'])
         estimator_state['target_update_counter'] = 0
@@ -234,14 +235,14 @@ class QFunctionAdvEstimator(AdvEstimator):
         """Called when it is not time to call 'update_Q_target'"""
         return estimator_state
 
-    def TD_loss(self, key, gamma, state_action_pairs, rewards, Q_theta_target, Q_theta):
+    def TD_loss(self, key, gamma, states, actions, rewards, Q_theta_target, Q_theta):
         """The TD error is given by
                [r(s_t, a_t) + gamma * Q(s_{t+1}, a_{t+1})] - Q(s_t, a_t)
            The TD loss is the square of TD error summed over the rollout
            and averaged across the rollout sample
         """
-        Q_vals = self.Q.apply(Q_theta, key, state_action_pairs)[..., 0]
-        Q_val_targets = self.Q.apply(Q_theta_target, key, state_action_pairs)[..., 0]
+        Q_vals = self.Q.apply(Q_theta, key, states, actions)[..., 0]
+        Q_val_targets = self.Q.apply(Q_theta_target, key, states, actions)[..., 0]
         TD_err = (rewards[..., :-1] + gamma * Q_val_targets[..., 1:]) - Q_vals[..., :-1]
         sq_TD_err = TD_err * TD_err
         cmlt_sq_TD_err = jnp.sum(sq_TD_err, axis=1)
@@ -250,12 +251,11 @@ class QFunctionAdvEstimator(AdvEstimator):
 
     def estimate(self, key, states, actions, rewards, estimator_state):
         B, T = rewards.shape
-        state_action_pairs = jnp.concatenate([states, actions], axis=2)
-        advantages = self.Q.apply(estimator_state['Q_theta'], key, state_action_pairs)[..., 0]
+        advantages = self.Q.apply(estimator_state['Q_theta'], key, states, actions)[..., 0]
 
         # update Q to minimize TD-loss
-        dTD_loss = jax.grad(self.TD_loss, argnums=5)
-        grads = dTD_loss(key, self.gamma, state_action_pairs, rewards, estimator_state['Q_theta_target'], estimator_state['Q_theta'])
+        dTD_loss = jax.grad(self.TD_loss, argnums=6)
+        grads = dTD_loss(key, self.gamma, states, actions, rewards, estimator_state['Q_theta_target'], estimator_state['Q_theta'])
         grads = jax.tree_util.tree_map(lambda grad_term: jnp.clip(grad_term, -self.grad_clip_val, self.grad_clip_val), grads)
         updates, estimator_state['opt_state'] = self.optimizer.update(grads, estimator_state['opt_state'])
         estimator_state['Q_theta'] = optax.apply_updates(estimator_state['Q_theta'], updates)
