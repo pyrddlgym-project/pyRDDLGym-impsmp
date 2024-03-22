@@ -53,5 +53,5 @@ instance sum_of_half_spaces_dim2_nsummands10_inst {
     domain = sum_of_half_spaces;
     non-fluents = sum_of_half_spaces_dim2_nsummands10;
     max-nondef-actions = 2;
-    horizon = 1;
+    horizon = 10;
     discount = 1.0;}

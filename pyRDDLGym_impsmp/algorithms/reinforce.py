@@ -73,9 +73,9 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, n_shards, epsilon,
         pi_inv = 1 / (policy.pdf(subkey, theta, states, actions) + epsilon)
         dpi = jacobian(subkey, theta, states, actions)
         dlogpi = jax.tree_util.tree_map(lambda dpi_term: weighting_map(pi_inv, dpi_term), dpi)
-        A_weighted_dlogpi = jax.tree_util.tree_map(lambda dlogpi_term: weighting_map(advantages, dlogpi_term), dlogpi)
+        adv_weighted_dlogpi = jax.tree_util.tree_map(lambda dlogpi_term: weighting_map(advantages, dlogpi_term), dlogpi)
 
-        dJ_summands = jax.tree_util.tree_map(lambda A_weighted_dlogpi_term: jnp.sum(A_weighted_dlogpi_term, axis=1), A_weighted_dlogpi)
+        dJ_summands = jax.tree_util.tree_map(lambda adv_weighted_dlogpi_term: jnp.sum(adv_weighted_dlogpi_term, axis=1), adv_weighted_dlogpi)
         carry = (key, adv_estimator_state)
         result = (actions, rewards, dJ_summands)
         return carry, result

@@ -1,7 +1,7 @@
 { "useGPU": false,
   "use64bit": true,
   "debug_nans": true,
-  "enable_jit": false,
+  "enable_jit": true,
   "seed": 3264,
   "state_dim": 2,
   "action_dim": 2,
@@ -52,16 +52,17 @@
     }
   },
   "training_adv_estimator": {
-    "type": "Q_function",
+    "type": "A_function",
     "params": {
       "gamma": 0.9,
+      "num_hidden_nodes_V": [32],
       "num_hidden_nodes_Q": [32, 32],
-      "target_update_freq": 250,
+      "target_update_freq": 100,
       "grad_clip_val": 1.0,
       "optimizer": {
         "type": "adam",
         "params": {
-          "learning_rate": 3e-2
+          "learning_rate": 1e-2
         }
       }
     }

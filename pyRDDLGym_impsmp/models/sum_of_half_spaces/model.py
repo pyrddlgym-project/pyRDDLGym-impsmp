@@ -1,5 +1,6 @@
 """RDDL SumOfHalfSpaces models for quick iteration"""
 import jax.numpy as jnp
+import jax.random
 import os
 
 import pyRDDLGym
@@ -11,6 +12,29 @@ import pyRDDLGym_jax.core.planner
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
 
+VALID_INITIALIZATION_STRATEGIES = (
+    'constant',
+    'normal',
+    'uniform'
+)
+
+
+def generate_initial_states(key, config, state_dim, n_rollouts):
+    """Initializes a batch of policy rollouts"""
+    s0_shape = (n_rollouts, state_dim)
+    if config['type'] == 'constant':
+        val = config['params']['value']
+        init_states = jnp.ones(shape=s0_shape) * val
+    elif config['type'] == 'normal':
+        mean = config['params']['mean']
+        scale = config['params']['scale']
+        init_states = mean + jax.random.normal(key, shape=s0_shape) * scale
+    elif config['type'] == 'uniform':
+        min = config['params']['min']
+        max = config['params']['max']
+        init_states = jax.random.uniform(key, shape=s0_shape, minval=min, maxval=max)
+    return init_states
+
 
 class SumOfHalfSpacesModel:
     def __init__(self,
@@ -19,6 +43,7 @@ class SumOfHalfSpacesModel:
                  n_summands,
                  instance_idx,
                  is_relaxed,
+                 initial_state_config,
                  reward_shift,
                  compiler_kwargs):
         """A wrapper around the RDDL Sum-of-Half-Spaces environment. The purpose
@@ -72,12 +97,15 @@ class SumOfHalfSpacesModel:
         else:
             self.compile(compiler_kwargs)
 
+        assert initial_state_config['type'] in VALID_INITIALIZATION_STRATEGIES
+        self.initial_state_config = initial_state_config
         self.reward_shift_val = reward_shift
 
 
     def compile(self, compiler_kwargs):
         """Compiles batched rollouts in the non-relaxed RDDL model.
-        The batch size is given by n_rollouts.
+        The batch size is given by n_rollouts. Each rollout takes
+        horizon many steps.
         """
         n_rollouts = compiler_kwargs['n_rollouts']
         policy_sample_fn = compiler_kwargs['policy_sample_fn']
@@ -93,7 +121,8 @@ class SumOfHalfSpacesModel:
         rollout_horizon = self.rddl_env.horizon
 
         def policy(key, policy_params, hyperparams, step, states):
-            return {'a': policy_sample_fn(key, policy_params['theta'])}
+            states = states['s']
+            return {'a': policy_sample_fn(key, policy_params['theta'], states)}
 
         self.compiler.compile()
         self.sampler = self.compiler.compile_rollouts(
@@ -132,7 +161,7 @@ class SumOfHalfSpacesModel:
         rollout_horizon = self.rddl_env.horizon
 
         def policy(key, policy_params, hyperparams, step, states):
-            return {'a': policy_sample_fn(key, policy_params['theta'])}
+            return {'a': policy_sample_fn(key, policy_params['theta'], states)}
 
         self.compiler.compile()
         self.sampler = self.compiler.compile_rollouts(
@@ -140,7 +169,7 @@ class SumOfHalfSpacesModel:
             n_steps=rollout_horizon,
             n_batch=n_rollouts)
 
-        # repeat subs over the batch and convert to real
+        # repeat subs over the batch and cast as real numbers
         subs = {}
         for (name, value) in init_state_subs.items():
             value = value.astype(self.compiler.REAL)
@@ -164,11 +193,19 @@ class SumOfHalfSpacesModel:
                 rollout rewards
 
         Returns:
+            states: jnp.array
+                Array of states. Shape (n_rollouts, T, state_dim)
             actions: jnp.array
-                Array of actions. Shape (n_rollouts, action_dim)
+                Array of actions. Shape (n_rollouts, T, action_dim)
             rewards: jnp.array
-                Array of rewards. Shape (n_rollouts,)
+                Array of rewards. Shape (n_rollouts, T)
+
+            (T denotes the environment horizon)
         """
+        key, subkey = jax.random.split(key)
+        init_states = generate_initial_states(subkey, self.initial_state_config, self.action_dim, self.n_rollouts)
+        self.subs['s'] = init_states
+
         rollouts = self.sampler(
             key,
             policy_params={'theta': theta},
@@ -176,9 +213,13 @@ class SumOfHalfSpacesModel:
             subs=self.subs,
             model_params=self.compiler.model_params)
 
-        # squeeze redundant action axis
-        actions = rollouts['action']['a'][:, 0, :]
-        # shift reward if required
-        rewards = rollouts['reward'][..., 0] + shift_reward + self.reward_shift_val
+        # add the initial state and remove the final state
+        # from the trajectory of states generated during the rollout
+        init_states = init_states[:, jnp.newaxis, ...]
+        truncated_state_traj = rollouts['pvar']['s'][:, :-1, ...]
+        states = jnp.concatenate([init_states, truncated_state_traj], axis=1)
+        actions = rollouts['action']['a']
+        # shift rewards if required
+        rewards = rollouts['reward'] + shift_reward + self.reward_shift_val
 
-        return actions, rewards
+        return states, actions, rewards
