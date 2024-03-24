@@ -5,7 +5,7 @@ For a useful reference, please see
 J. Schulman, P. Moritz, S. Levine, M.I. Jordan, P. Abbeel. "High-Dimensional
 Continuous Control Using Generalized Advantage Estimation". ICLR 2016
 """
-from abc import ABC, abstractmethod
+from pyRDDLGym_impsmp.advantage_estimators.base import AdvEstimator
 from collections import deque
 import numpy as np
 import jax.numpy as jnp
@@ -32,19 +32,6 @@ def compute_future_discounted_traj_rewards(rewards, gamma):
     return future_disc_trajrews
 
 
-class AdvEstimator(ABC):
-    def __init__(self, key):
-        pass
-
-    @abstractmethod
-    def initialize_estimator_state(self, key, state_dim, action_dim):
-        pass
-
-    @abstractmethod
-    def estimate(self, key, states, actions, rewards, estimator_state):
-        pass
-
-
 
 class TotalTrajRewardAdvEstimator(AdvEstimator):
     """The advantages are estimated using the total trajectory reward, i.e.
@@ -52,13 +39,13 @@ class TotalTrajRewardAdvEstimator(AdvEstimator):
     for all t
     """
     def initialize_estimator_state(self, key, state_dim, action_dim):
-        return {}
+        return key, {}
 
     def estimate(self, key, states, actions, rewards, estimator_state):
         T = rewards.shape[1]
         trajrews = jnp.sum(rewards, axis=1)
         advantages = jnp.repeat(trajrews[:,jnp.newaxis], T, axis=1)
-        return advantages, estimator_state
+        return key, advantages, estimator_state
 
 
 class FutureTrajRewardAdvEstimator(AdvEstimator):
@@ -72,11 +59,11 @@ class FutureTrajRewardAdvEstimator(AdvEstimator):
         assert 0.0 < self.gamma <= 1.0
 
     def initialize_estimator_state(self, key, state_dim, action_dim):
-        return {}
+        return key, {}
 
     def estimate(self, key, states, actions, rewards, estimator_state):
         advantages = compute_future_discounted_traj_rewards(rewards, self.gamma)
-        return advantages, estimator_state
+        return key, advantages, estimator_state
 
 
 class FutureTrajRewardWConstantBaselineAdvEstimator(AdvEstimator):
@@ -90,12 +77,12 @@ class FutureTrajRewardWConstantBaselineAdvEstimator(AdvEstimator):
         self.base_val = base_val
 
     def initialize_estimator_state(self, key, state_dim, action_dim):
-        return {}
+        return key, {}
 
     def estimate(self, key, states, actions, rewards, estimator_state):
         future_disc_trajrews = compute_future_discounted_traj_rewards(rewards, self.gamma)
         advantages = future_disc_trajrews - self.base_val
-        return advantages, estimator_state
+        return key, advantages, estimator_state
 
 
 class FutureTrajRewardWRunningAvgBaselineAdvEstimator(AdvEstimator):
@@ -112,7 +99,7 @@ class FutureTrajRewardWRunningAvgBaselineAdvEstimator(AdvEstimator):
             'base_val': 0.0,
             'num_seen_state_vals': 0
         }
-        return estimator_state
+        return key, estimator_state
 
     def estimate(self, key, states, actions, rewards):
         future_disc_trajrews = compute_future_discounted_traj_rewards(rewards, self.gamma)
@@ -125,7 +112,7 @@ class FutureTrajRewardWRunningAvgBaselineAdvEstimator(AdvEstimator):
         estimator_state['num_seen_state_vals'] += num_new_state_vals
 
         advantages = future_disc_trajrews - estimator_state['base_val']
-        return advantages, estimator_state
+        return key, advantages, estimator_state
 
 
 class FutureTrajRewardWLearnedBaselineAdvEstimator(AdvEstimator):
@@ -157,10 +144,12 @@ class FutureTrajRewardWLearnedBaselineAdvEstimator(AdvEstimator):
     def initialize_estimator_state(self, key, state_dim, action_dim):
         estimator_state = {}
 
+        key, subkey = jax.random.split(key)
+
         dummy_state = jnp.ones(state_dim)
-        estimator_state['V_theta'] = self.V.init(key, dummy_state)
+        estimator_state['V_theta'] = self.V.init(subkey, dummy_state)
         estimator_state['opt_state'] = self.optimizer.init(estimator_state['V_theta'])
-        return estimator_state
+        return key, estimator_state
 
     def loss(self, key, future_disc_trajrews, states, V_theta):
         state_vals = self.V.apply(V_theta, key, states)
@@ -173,7 +162,8 @@ class FutureTrajRewardWLearnedBaselineAdvEstimator(AdvEstimator):
         future_disc_trajrews = compute_future_discounted_traj_rewards(rewards, self.gamma)
 
         # compute advantages
-        state_vals = self.V.apply(estimator_state['V_theta'], key, states)
+        key, subkey = jax.random.split(key)
+        state_vals = self.V.apply(estimator_state['V_theta'], subkey, states)
         advantages = future_disc_trajrews - state_vals
 
         # update V to minimize squared error
@@ -182,7 +172,7 @@ class FutureTrajRewardWLearnedBaselineAdvEstimator(AdvEstimator):
         updates, estimator_state['opt_state'] = self.optimizer.update(grads, estimator_state['opt_state'])
         estimator_state['V_theta'] = optax.apply_updates(estimator_state['V_theta'], updates)
 
-        return advantages, estimator_state
+        return key, advantages, estimator_state
 
 
 class QFunctionAdvEstimator(AdvEstimator):
@@ -216,24 +206,15 @@ class QFunctionAdvEstimator(AdvEstimator):
 
     def initialize_estimator_state(self, key, state_dim, action_dim):
         estimator_state = {}
+
+        key, subkey = jax.random.split(key)
+
         dummy_state, dummy_action = jnp.ones(state_dim), jnp.ones(action_dim)
-        estimator_state['Q_theta'] = self.Q.init(key, dummy_state, dummy_action)
+        estimator_state['Q_theta'] = self.Q.init(subkey, dummy_state, dummy_action)
         estimator_state['Q_theta_target'] = jax.tree_util.tree_map(lambda Q_theta_term: jnp.copy(Q_theta_term), estimator_state['Q_theta'])
         estimator_state['opt_state'] = self.optimizer.init(estimator_state['Q_theta'])
         estimator_state['target_update_counter'] = 0
-        return estimator_state
-
-    def update_Q_target(self, estimator_state):
-        """Functional approach to periodically updating the target Q-values.
-        Otherwise conflicts with jit.
-        """
-        estimator_state['Q_theta_target'] = jax.tree_util.tree_map(lambda Q_theta_term: jnp.copy(Q_theta_term), estimator_state['Q_theta'])
-        estimator_state['target_update_counter'] = 0
-        return estimator_state
-
-    def skip_update_Q_target(self, estimator_state):
-        """Called when it is not time to call 'update_Q_target'"""
-        return estimator_state
+        return key, estimator_state
 
     def dQ_a(self, key, states, actions, estimator_state):
         """Calculates the partials of the current Q-function with respect to the actions"""
@@ -261,8 +242,9 @@ class QFunctionAdvEstimator(AdvEstimator):
         advantages = self.Q.apply(estimator_state['Q_theta'], key, states, actions)
 
         # update Q to minimize TD-loss
+        key, subkey = jax.random.split(key)
         dTD_loss = jax.grad(self.TD_loss, argnums=6)
-        grads = dTD_loss(key, self.gamma, states, actions, rewards, estimator_state['Q_theta_target'], estimator_state['Q_theta'])
+        grads = dTD_loss(subkey, self.gamma, states, actions, rewards, estimator_state['Q_theta_target'], estimator_state['Q_theta'])
         grads = jax.tree_util.tree_map(lambda grad_term: jnp.clip(grad_term, -self.grad_clip_val, self.grad_clip_val), grads)
         updates, estimator_state['opt_state'] = self.optimizer.update(grads, estimator_state['opt_state'])
         estimator_state['Q_theta'] = optax.apply_updates(estimator_state['Q_theta'], updates)
@@ -274,8 +256,19 @@ class QFunctionAdvEstimator(AdvEstimator):
             self.skip_update_Q_target,
             estimator_state)
 
-        return advantages, estimator_state
+        return key, advantages, estimator_state
 
+    def update_Q_target(self, estimator_state):
+        """Functional approach to periodically updating the target Q-values.
+        Otherwise conflicts with jit.
+        """
+        estimator_state['Q_theta_target'] = jax.tree_util.tree_map(lambda Q_theta_term: jnp.copy(Q_theta_term), estimator_state['Q_theta'])
+        estimator_state['target_update_counter'] = 0
+        return estimator_state
+
+    def skip_update_Q_target(self, estimator_state):
+        """Called when it is not time to call 'update_Q_target'"""
+        return estimator_state
 
 
 class AFunctionAdvEstimator(AdvEstimator):
@@ -321,14 +314,17 @@ class AFunctionAdvEstimator(AdvEstimator):
 
     def initialize_estimator_state(self, key, state_dim, action_dim):
         estimator_state = {}
+
+        key, subkey = jax.random.split(key)
+
         dummy_state, dummy_action = jnp.ones(state_dim), jnp.ones(action_dim)
-        estimator_state['V_theta'] = self.V.init(key, dummy_state)
-        estimator_state['Q_theta'] = self.Q.init(key, dummy_state, dummy_action)
+        estimator_state['V_theta'] = self.V.init(subkey, dummy_state)
+        estimator_state['Q_theta'] = self.Q.init(subkey, dummy_state, dummy_action)
         estimator_state['Q_theta_target'] = jax.tree_util.tree_map(lambda Q_theta_term: jnp.copy(Q_theta_term), estimator_state['Q_theta'])
         estimator_state['V_opt_state'] = self.V_optimizer.init(estimator_state['V_theta'])
         estimator_state['Q_opt_state'] = self.Q_optimizer.init(estimator_state['Q_theta'])
         estimator_state['target_update_counter'] = 0
-        return estimator_state
+        return key, estimator_state
 
     def update_Q_target(self, estimator_state):
         """Functional approach to periodically updating the target Q-values.
@@ -374,16 +370,18 @@ class AFunctionAdvEstimator(AdvEstimator):
         # compute advantages
         advantages = Q_vals - V_vals
 
+        key, subkey = jax.random.split(key)
+
         # update V to minimize squared error
         dloss = jax.grad(self.regr_loss, argnums=3)
-        grads = dloss(key, future_disc_trajrews, states, estimator_state['V_theta'])
+        grads = dloss(subkey, future_disc_trajrews, states, estimator_state['V_theta'])
         grads = jax.tree_util.tree_map(lambda grad_term: jnp.clip(grad_term, -self.grad_clip_val, self.grad_clip_val), grads)
         updates, estimator_state['V_opt_state'] = self.V_optimizer.update(grads, estimator_state['V_opt_state'])
         estimator_state['V_theta'] = optax.apply_updates(estimator_state['V_theta'], updates)
 
         # update Q to minimize TD-loss
         dTD_loss = jax.grad(self.TD_loss, argnums=6)
-        grads = dTD_loss(key, self.gamma, states, actions, rewards, estimator_state['Q_theta_target'], estimator_state['Q_theta'])
+        grads = dTD_loss(subkey, self.gamma, states, actions, rewards, estimator_state['Q_theta_target'], estimator_state['Q_theta'])
         grads = jax.tree_util.tree_map(lambda grad_term: jnp.clip(grad_term, -self.grad_clip_val, self.grad_clip_val), grads)
         updates, estimator_state['Q_opt_state'] = self.Q_optimizer.update(grads, estimator_state['Q_opt_state'])
         estimator_state['Q_theta'] = optax.apply_updates(estimator_state['Q_theta'], updates)
@@ -395,7 +393,7 @@ class AFunctionAdvEstimator(AdvEstimator):
             self.skip_update_Q_target,
             estimator_state)
 
-        return advantages, estimator_state
+        return key, advantages, estimator_state
 
 
 
@@ -429,10 +427,12 @@ class TDResidualAdvEstimator(AdvEstimator):
     def initialize_estimator_state(self, key, state_dim, action_dim):
         estimator_state = {}
 
+        key, subkey = jax.random.split(key)
+
         dummy_state = jnp.ones(state_dim)
-        estimator_state['V_theta'] = self.V.init(key, dummy_state)
+        estimator_state['V_theta'] = self.V.init(subkey, dummy_state)
         estimator_state['opt_state'] = self.optimizer.init(estimator_state['V_theta'])
-        return estimator_state
+        return key, estimator_state
 
     def loss(self, key, future_disc_trajrews, states, V_theta):
         state_vals = self.V.apply(V_theta, key, states)
@@ -449,11 +449,13 @@ class TDResidualAdvEstimator(AdvEstimator):
         state_vals = jnp.pad(state_vals, ((0, 0), (0, 1)))
         advantages = (rewards + self.gamma * state_vals[..., 1:]) - state_vals[..., :-1]
 
+        key, subkey = jax.random.split(key)
+
         # update V to minimize squared error
         dloss = jax.grad(self.loss, argnums=3)
-        grads = dloss(key, future_disc_trajrews, states, estimator_state['V_theta'])
+        grads = dloss(subkey, future_disc_trajrews, states, estimator_state['V_theta'])
         grads = jax.tree_util.tree_map(lambda grad_term: jnp.clip(grad_term, -self.grad_clip_val, self.grad_clip_val), grads)
         updates, estimator_state['opt_state'] = self.optimizer.update(grads, estimator_state['opt_state'])
         estimator_state['V_theta'] = optax.apply_updates(estimator_state['V_theta'], updates)
 
-        return advantages, estimator_state
+        return key, advantages, estimator_state

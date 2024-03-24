@@ -14,10 +14,25 @@ weighting_map = jax.vmap(
     scalar_mult, in_axes=0, out_axes=0)
 
 
+def unnormalized_instr_density(key, theta, policy, model, adv_estimator, adv_estimator_state, states, actions):
+    """Computes the value of the (unnormalized) instrumental probability density
+    at the provided batch of states and actions
+    """
+    dpi = policy.diagonal_of_jacobian(key, theta, states, actions)
+    key, Q_values, _ = adv_estimator.estimate(key, states, actions, None, adv_estimator_state)
+    density = jnp.abs(dpi * Q_values[..., 0])
+    return density
+
+def unnormalized_log_instr_density(key, theta, policy, model, adv_estimator, adv_estimator_state, states, actions):
+    density = unnormalized_instr_density(key, theta, policy, model, adv_estimator, adv_estimator_state, states, actions)
+    return jnp.log(density)
+
+
+
 @functools.partial(
     jax.jit,
     static_argnames=('n_shards', 'batch_size', 'epsilon', 'policy', 'model', 'adv_estimator'))
-def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, n_shards, epsilon, policy, model, adv_estimator, adv_estimator_state):
+def compute_impsamp_dJ_hat_estimate(key, theta, batch_size, n_shards, epsilon, policy, model, adv_estimator, adv_estimator_state):
     """Computes an estimate of dJ^pi over a sample of rolled out trajectories
 
         B = {tau_0, tau_1, ..., tau_{|B|-1}}
@@ -57,11 +72,11 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, n_shards, epsilon,
         the computation into GPU VRAM, for example)
         """
         key, adv_estimator_state = init
-        key, init_states = model.batch_generate_initial_state(key, (model.n_rollouts, model.state_dim))
-        key, states, actions, rewards = model.rollout(key, init_states, theta)
-        key, advantages, adv_estimator_state = adv_estimator.estimate(key, states, actions, rewards, adv_estimator_state)
-        pi_inv = 1 / (policy.pdf(key, theta, states, actions) + epsilon)
-        dpi = jacobian(key, theta, states, actions)
+        key, subkey = jax.random.split(key)
+        states, actions, rewards = model.rollout(subkey, theta)
+        advantages, adv_estimator_state = adv_estimator.estimate(subkey, states, actions, rewards, adv_estimator_state)
+        pi_inv = 1 / (policy.pdf(subkey, theta, states, actions) + epsilon)
+        dpi = jacobian(subkey, theta, states, actions)
         dlogpi = jax.tree_util.tree_map(lambda dpi_term: weighting_map(pi_inv, dpi_term), dpi)
         adv_weighted_dlogpi = jax.tree_util.tree_map(lambda dlogpi_term: weighting_map(advantages, dlogpi_term), dlogpi)
 
@@ -86,7 +101,7 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, n_shards, epsilon,
 
 @functools.partial(jax.jit, static_argnames=('eval_n_shards', 'eval_batch_size', 'policy', 'model'))
 def evaluate_policy(key, it, algo_stats, eval_n_shards, eval_batch_size, theta, policy, model):
-    key, init_states = model.batch_generate_initial_state(key, (model.n_rollouts, model.state_dim))
+    key, init_states = model.batch_reset(key)
     key, states, actions, rewards = model.rollout(key, init_states, theta)
     rewards = jnp.sum(rewards, axis=1) # sum rewards along the time axis
     key, subkey = jax.random.split(key)
@@ -105,7 +120,7 @@ def evaluate_policy(key, it, algo_stats, eval_n_shards, eval_batch_size, theta, 
         'batch_size',
         'save_dJ')
     )
-def update_reinforce_stats(key, it, algo_stats, batch_stats, batch_size, save_dJ):
+def update_impsamp_stats(key, it, algo_stats, batch_stats, batch_size, save_dJ):
     """Updates the REINFORCE statistics using the statistics returned
     from the computation of dJ_hat for the current sample as well as
     the current policy mean/cov """
@@ -127,7 +142,7 @@ def update_reinforce_stats(key, it, algo_stats, batch_stats, batch_size, save_dJ
     #algo_stats['transformed_policy_sample_cov']  = algo_stats['transformed_policy_sample_cov'].at[it].set(jnp.squeeze(jnp.std(batch_stats['actions'], axis=0))**2)
     return key, algo_stats
 
-def print_reinforce_report(it, algo_stats, subt0, subt1):
+def print_impsamp_report(it, algo_stats, subt0, subt1):
     """Prints out the results for the current REINFORCE iteration to console"""
     print(f'Iter {it} :: REINFORCE :: Runtime={subt1-subt0}s')
     print(f'Untransformed parametrized policy [Mean, Diag(Cov)] =')
@@ -141,23 +156,26 @@ def print_reinforce_report(it, algo_stats, subt0, subt1):
     print(f'Eval. reward={algo_stats["reward_mean"][it]:.3f} \u00B1 {algo_stats["reward_sterr"][it]:.3f}\n')
 
 
-def reinforce(key, n_iters, config, bijector, policy, sampler, optimizer, models, adv_estimator, adv_estimator_state):
+def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, adv_estimator, adv_estimator_state):
     """Runs the REINFORCE algorithm"""
     action_dim = policy.action_dim
     batch_size = config['batch_size']
     eval_batch_size = config['eval_batch_size']
 
+    sampling_model = models['sampling_model']
     train_model = models['train_model']
     eval_model = models['eval_model']
+
+    horizon = train_model.horizon
 
     # compute the necessary number of shards
     n_shards = int(batch_size // train_model.n_rollouts)
     eval_n_shards = int(eval_batch_size // eval_model.n_rollouts)
     assert n_shards > 0, (
-         '[reinforce] Please check that batch_size > train_model.n_rollouts.'
+         '[impsamp] Please check that batch_size > train_model.n_rollouts.'
         f' batch_size={batch_size}, train_model.n_rollouts={train_model.n_rollouts}')
     assert eval_n_shards > 0, (
-        '[reinforce] Please check that eval_batch_size > eval_model.n_rollouts.'
+        '[impsamp] Please check that eval_batch_size > eval_model.n_rollouts.'
         f' eval_batch_size={eval_batch_size}, eval_model.n_rollouts={eval_model.n_rollouts}')
 
     epsilon = config.get('epsilon', 1e-12)
@@ -192,13 +210,57 @@ def reinforce(key, n_iters, config, bijector, policy, sampler, optimizer, models
     # initialize optimizer
     opt_state = optimizer.init(policy.theta)
 
-    # run REINFORCE
+    # initialize bijector
+    unconstraining_bijector = [
+        bijector
+    ]
+
+    samples = None
+
+    # run REINFORCE with Importance Sampling
     for it in range(n_iters):
         subt0 = timer()
 
         key, algo_stats = evaluate_policy(key, it, algo_stats, eval_n_shards, eval_batch_size, policy.theta, policy, eval_model)
 
-        key, dJ_hat, adv_estimator_state, batch_stats = compute_reinforce_dJ_hat_estimate(
+        # sample rollouts one step at a time using instrumental densities
+        key, states = train_model.batch_reset(key)
+        for t in range(horizon):
+            key, *subkeys = jax.random.split(key, num=3)
+
+            print(policy.n_params, 'policy n_params')
+
+            # sample actions from instrumental density
+            unnorm_log_density = functools.partial(
+                unnormalized_log_instr_density,
+                subkeys[0],
+                policy.theta,
+                policy,
+                sampling_model,
+                adv_estimator,
+                adv_estimator_state)
+
+            key = sampler.generate_step_size(key)
+            key = sampler.prep(key,
+                               it,
+                               target_log_prob_fn=unnorm_log_density,
+                               unconstraining_bijector=unconstraining_bijector)
+            key = sampler.generate_initial_state(key, it, samples)
+            try:
+                key, actions, accepted_matrix = sampler.sample(key, policy.theta, policy.n_params, states)
+            except FloatingPointError as e:
+                warnings.warn(f'[impsamp] Iteration {it}. Caught FloatingPointError exception during sampling')
+                continue
+            else:
+                print(t)
+
+            print(states.shape)
+            print(actions.shape)
+            exit()
+
+
+        exit()
+        key, dJ_hat, adv_estimator_state, batch_stats = compute_impsamp_dJ_hat_estimate(
             key, policy.theta,
             batch_size, n_shards, epsilon, policy, train_model,
             adv_estimator, adv_estimator_state)
@@ -207,12 +269,14 @@ def reinforce(key, n_iters, config, bijector, policy, sampler, optimizer, models
         policy.theta = optax.apply_updates(policy.theta, updates)
 
         # update statistics and print out report for current iteration
-        key, algo_stats = update_reinforce_stats(key, it, algo_stats, batch_stats, batch_size, save_dJ)
+        key, algo_stats = update_impsamp_stats(key, it, algo_stats, batch_stats, batch_size, save_dJ)
+
+        subt1 = timer()
         if verbose:
-            print_reinforce_report(it, algo_stats, subt0, timer())
+            print_impsamp_report(it, algo_stats, subt0, subt1)
 
     algo_stats.update({
-        'algorithm': 'REINFORCE',
+        'algorithm': 'ImpSamp',
         'n_iters': n_iters,
         'config': config,
     })

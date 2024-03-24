@@ -19,20 +19,19 @@ VALID_INITIALIZATION_STRATEGIES = (
 )
 
 
-def generate_initial_states(key, config, state_dim, n_rollouts):
+def generate_initial_states(key, config, batch_shape):
     """Initializes a batch of policy rollouts"""
-    s0_shape = (n_rollouts, state_dim)
     if config['type'] == 'constant':
         val = config['params']['value']
-        init_states = jnp.ones(shape=s0_shape) * val
+        init_states = jnp.ones(shape=batch_shape) * val
     elif config['type'] == 'normal':
         mean = config['params']['mean']
         scale = config['params']['scale']
-        init_states = mean + jax.random.normal(key, shape=s0_shape) * scale
+        init_states = mean + jax.random.normal(key, shape=batch_shape) * scale
     elif config['type'] == 'uniform':
         min = config['params']['min']
         max = config['params']['max']
-        init_states = jax.random.uniform(key, shape=s0_shape, minval=min, maxval=max)
+        init_states = jax.random.uniform(key, shape=batch_shape, minval=min, maxval=max)
     return init_states
 
 
@@ -87,6 +86,8 @@ class SumOfHalfSpacesModel:
                                           instance=self.instance_file_path)
 
         self.model = self.rddl_env.model
+        self.horizon = self.rddl_env.horizon
+        self.state_dim = action_dim # True for SumOfHalfSpaces
         self.action_dim = action_dim
         self.n_summands = n_summands
         assert self.action_dim == self.rddl_env.max_allowed_actions
@@ -125,7 +126,7 @@ class SumOfHalfSpacesModel:
             return {'a': policy_sample_fn(key, policy_params['theta'], states)}
 
         self.compiler.compile()
-        self.sampler = self.compiler.compile_rollouts(
+        self.rollout_sampler = self.compiler.compile_rollouts(
             policy=policy,
             n_steps=rollout_horizon,
             n_batch=n_rollouts)
@@ -164,7 +165,7 @@ class SumOfHalfSpacesModel:
             return {'a': policy_sample_fn(key, policy_params['theta'], states)}
 
         self.compiler.compile()
-        self.sampler = self.compiler.compile_rollouts(
+        self.rollout_sampler = self.compiler.compile_rollouts(
             policy=policy,
             n_steps=rollout_horizon,
             n_batch=n_rollouts)
@@ -180,12 +181,23 @@ class SumOfHalfSpacesModel:
             subs[next_state] = subs[state]
         self.subs = subs
 
-    def rollout(self, key, theta, shift_reward=False):
+    def batch_generate_initial_state(self, key, batch_shape):
+        """Generates the initial states over a batch of generic shape.
+        The batch does not have to have shape (n_rollouts, state_dim).
+        For example, it could have shape (n_rollouts, n_params, state_dim).
+        """
+        key, subkey = jax.random.split(key)
+        init_states = generate_initial_states(subkey, self.initial_state_config, batch_shape)
+        return key, init_states
+
+    def rollout(self, key, init_states, theta, shift_reward=False):
         """Rolls out the policy with parameters theta over a batch
 
         Args:
             key: jax.random.PRNGKey
                 Random key
+            init_states: jnp.array
+                Array of initial states
             theta: pyTree
                 Current policy parameters
             shift_reward: Boolean
@@ -202,12 +214,11 @@ class SumOfHalfSpacesModel:
 
             (T denotes the environment horizon)
         """
-        key, subkey = jax.random.split(key)
-        init_states = generate_initial_states(subkey, self.initial_state_config, self.action_dim, self.n_rollouts)
         self.subs['s'] = init_states
 
-        rollouts = self.sampler(
-            key,
+        key, subkey = jax.random.split(key)
+        rollouts = self.rollout_sampler(
+            subkey,
             policy_params={'theta': theta},
             hyperparams=None,
             subs=self.subs,
@@ -220,6 +231,6 @@ class SumOfHalfSpacesModel:
         states = jnp.concatenate([init_states, truncated_state_traj], axis=1)
         actions = rollouts['action']['a']
         # shift rewards if required
-        rewards = rollouts['reward'] + shift_reward + self.reward_shift_val
+        rewards = rollouts['reward'] + shift_reward * self.reward_shift_val
 
-        return states, actions, rewards
+        return key, states, actions, rewards

@@ -1,0 +1,112 @@
+{ "useGPU": false,
+  "use64bit": true,
+  "debug_nans": true,
+  "enable_jit": true,
+  "seed": 3264,
+  "state_dim": 2,
+  "action_dim": 2,
+  "n_iters": 100,
+  "models": {
+    "type": "sum_of_half_spaces",
+    "params": {
+      "n_summands": 10,
+      "instance_idx": 0,
+      "reward_shift": 0.0,
+      "specs": {
+        "train_model": {
+          "is_relaxed": false,
+          "initial_state_config": {
+            "type": "normal",
+            "params": {
+              "mean": 0.0,
+              "scale": 2.0
+            }
+          },
+          "compiler_kwargs": {
+            "n_rollouts": 32
+          }
+        },
+        "sampling_model": {
+          "is_relaxed": true,
+          "initial_state_config": {
+            "type": "constant",
+            "params": {
+              "value": 0.0
+            }
+          },
+          "compiler_kwargs": {
+            "n_rollouts": 1,
+            "use64bit": true,
+            "weight": 10.0
+          }
+        },
+        "eval_model": {
+          "is_relaxed": false,
+          "initial_state_config": {
+            "type": "constant",
+            "params": {
+              "value": 0.0
+            }
+          },
+          "compiler_kwargs": {
+            "n_rollouts": 32
+          }
+        }
+      }
+    }
+  },
+  "bijector": {
+    "type": "identity",
+    "params": {}
+  },
+  "policy": {
+    "type": "multivar_normal_with_state_dependent_linear_parametrization",
+    "params": {
+        "cov_lower_cap": 0.00
+    }
+  },
+  "adv_estimator": {
+    "type": "sampling_model_Q_function",
+    "params": {
+      "gamma": 0.9,
+      "num_hidden_nodes_Q": [4, 4],
+      "target_update_freq": 250,
+      "grad_clip_val": 1.0,
+      "optimizer": {
+        "type": "adam",
+        "params": {
+          "learning_rate": 3e-2
+        }
+      }
+    }
+  },
+  "optimizer": {
+    "type": "adabelief",
+    "params": {
+      "learning_rate": 0.05
+    }
+  },
+  "algorithm": {
+    "type": "impsamp",
+    "params": {
+      "batch_size": 32,
+      "eval_batch_size": 32,
+      "sampler": {
+        "type": "fixed_num_accepted_rejection_sampler",
+        "params": {
+          "proposal_pdf_type": "cur_policy",
+          "sample_shape_type": "one_sample_per_parameter",
+          "rejection_rate_schedule": {
+            "type": "constant",
+            "params": {
+              "value": 100
+            }
+          }
+        }
+      },
+      "epsilon": 1e-12,
+      "verbose": true
+    }
+  },
+  "save_to": null
+}

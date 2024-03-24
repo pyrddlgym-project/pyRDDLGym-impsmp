@@ -9,19 +9,20 @@ import pyRDDLGym_impsmp.samplers
 #import pyRDDLGym.Examples.Traffic.Calibration.instances.inflow_calibration_models
 
 advantage_estimator_lookup_table = {
-    'total_traj_reward': pyRDDLGym_impsmp.advantage_estimators.estimators.TotalTrajRewardAdvEstimator,
-    'future_traj_reward': pyRDDLGym_impsmp.advantage_estimators.estimators.FutureTrajRewardAdvEstimator,
-    'future_traj_reward_w_constant_baseline': pyRDDLGym_impsmp.advantage_estimators.estimators.FutureTrajRewardWConstantBaselineAdvEstimator,
-    'future_traj_reward_w_running_average_baseline': pyRDDLGym_impsmp.advantage_estimators.estimators.FutureTrajRewardWRunningAvgBaselineAdvEstimator,
-    'V_function': pyRDDLGym_impsmp.advantage_estimators.estimators.FutureTrajRewardWLearnedBaselineAdvEstimator,
-    'Q_function': pyRDDLGym_impsmp.advantage_estimators.estimators.QFunctionAdvEstimator,
-    'A_function': pyRDDLGym_impsmp.advantage_estimators.estimators.AFunctionAdvEstimator,
-    'TD_residual': pyRDDLGym_impsmp.advantage_estimators.estimators.TDResidualAdvEstimator,
+    'total_traj_reward': pyRDDLGym_impsmp.advantage_estimators.reinforce_estimators.TotalTrajRewardAdvEstimator,
+    'future_traj_reward': pyRDDLGym_impsmp.advantage_estimators.reinforce_estimators.FutureTrajRewardAdvEstimator,
+    'future_traj_reward_w_constant_baseline': pyRDDLGym_impsmp.advantage_estimators.reinforce_estimators.FutureTrajRewardWConstantBaselineAdvEstimator,
+    'future_traj_reward_w_running_average_baseline': pyRDDLGym_impsmp.advantage_estimators.reinforce_estimators.FutureTrajRewardWRunningAvgBaselineAdvEstimator,
+    'V_function': pyRDDLGym_impsmp.advantage_estimators.reinforce_estimators.FutureTrajRewardWLearnedBaselineAdvEstimator,
+    'Q_function': pyRDDLGym_impsmp.advantage_estimators.reinforce_estimators.QFunctionAdvEstimator,
+    'A_function': pyRDDLGym_impsmp.advantage_estimators.reinforce_estimators.AFunctionAdvEstimator,
+    'TD_residual': pyRDDLGym_impsmp.advantage_estimators.reinforce_estimators.TDResidualAdvEstimator,
+    'sampling_model_Q_function': pyRDDLGym_impsmp.advantage_estimators.impsamp_estimators.SamplingModelQFunctionAdvEstimator,
 }
 
 algorithm_lookup_table = {
     'reinforce': pyRDDLGym_impsmp.algorithms.reinforce.reinforce,
-    'impsmp': pyRDDLGym_impsmp.algorithms.impsmp.impsmp,
+    'impsamp': pyRDDLGym_impsmp.algorithms.impsamp.impsamp,
     'impsmp_per_parameter': pyRDDLGym_impsmp.algorithms.impsmp_per_parameter.impsmp_per_parameter,
     'impsmp_per_parameter_signed': pyRDDLGym_impsmp.algorithms.impsmp_per_parameter_signed.impsmp_per_parameter_signed,
 }

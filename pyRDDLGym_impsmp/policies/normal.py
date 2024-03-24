@@ -52,9 +52,9 @@ class MultivarNormalHKParametrization:
         density_correction = jnp.apply_along_axis(self.bijector._inverse_det_jacobian, axis=-1, arr=actions)
         return normal_pdf * density_correction
 
-    def diagonal_of_jacobian(self, key, theta, a):
-        """The following computation of the diagonal of the Jacobian matrix
-        uses JAX primitives, and works with any policy parametrization, but
+    def diagonal_of_jacobian(self, key, theta, s, a):
+        """A computation of the diagonal of the Jacobian matrix that uses JAX
+        primitives, and works with any policy parametrization, but
         computes the entire Jacobian before taking the diagonal. Therefore,
         the computation time scales rather poorly with increasing dimension.
         There is apparently no natural way in JAX of computing the diagonal
@@ -63,13 +63,9 @@ class MultivarNormalHKParametrization:
         See also:
             https://stackoverflow.com/questions/70956578/jacobian-diagonal-computation-in-jax
         """
-        dpi = jax.jacrev(self.pdf, argnums=1)(key, theta, a)
-        dpi = jax.tree_util.tree_map(lambda x: jnp.diagonal(x, axis1=0, axis2=3), dpi)
-        dpi = jax.tree_util.tree_map(lambda x: jnp.diagonal(x, axis1=0, axis2=2), dpi)
-        dpi = jax.tree_util.tree_map(lambda x: x[0], dpi)
-        return dpi
+        raise NotImplementedError
 
-    def analytic_diagonal_of_jacobian(self, key, theta, a):
+    def analytic_diagonal_of_jacobian(self, key, theta, s, a):
         """When it is possible to compute the diagonal of the Jacobian terms
         analytically (as it is for the linear parametrization of a normal distribution,
         for example), substituting the analytic computation in place of the general
@@ -128,7 +124,14 @@ class MultivarNormalLinearParametrization(MultivarNormalHKParametrization):
     def apply(self, key, theta, state):
         return self.pi.apply(theta, key, self.one_hot_inputs)
 
-    def analytic_diagonal_of_jacobian(self, key, theta, a):
+    def diagonal_of_jacobian(self, key, theta, s, a):
+        dpi = jax.jacrev(self.pdf, argnums=1)(key, theta, s, a)
+        dpi = jax.tree_util.tree_map(lambda x: jnp.diagonal(x, axis1=0, axis2=3), dpi)
+        dpi = jax.tree_util.tree_map(lambda x: jnp.diagonal(x, axis1=0, axis2=2), dpi)
+        dpi = jax.tree_util.tree_map(lambda x: x[0], dpi)
+        return dpi
+
+    def analytic_diagonal_of_jacobian(self, key, theta, s, a):
         """The following computes the diagonal of the Jacobian analytically.
         It valid ONLY when the policy is parametrized by a normal distribution
         with parameters
@@ -141,6 +144,8 @@ class MultivarNormalLinearParametrization(MultivarNormalHKParametrization):
 
         The scaling of computation time with increasing dimension seems much
         improved.
+
+        TODO: Update to include state-dep
         """
         pi_val = self.pdf(key, theta, a)[..., 0]
 
@@ -216,12 +221,25 @@ class MultivarNormalLinearStateDependentParametrization(MultivarNormalHKParametr
     def apply(self, key, theta, state):
         return self.pi.apply(theta, key, state)
 
+    def diagonal_of_jacobian(self, key, theta, s, a):
+        def flat_reduce(accumulator, item):
+            item = item.reshape(self.n_params, 1, -1)
+            accumulator = jnp.concatenate([accumulator, item], axis=2)
+            return accumulator
+
+        dpi = jax.jacrev(self.pdf, argnums=1)(key, theta, s, a)
+        dpi_matrix = jnp.squeeze(jax.tree_util.tree_reduce(flat_reduce, dpi))
+        return jnp.diagonal(dpi_matrix)
+
     def clip_theta(self, theta):
         """Clips the covariance parameters of the policy from below to the configured
         value, accounting for the softplus transform"""
         return jax.tree_util.tree_map(
             lambda term: term.at[:,1].set(jnp.maximum(term[:,1], self.cov_lower_cap)),
             theta)
+
+
+
 
 
 class MultivarNormalMLPParametrization(MultivarNormalHKParametrization):

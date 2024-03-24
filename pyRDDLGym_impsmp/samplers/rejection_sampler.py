@@ -90,14 +90,14 @@ class FixedNumTrialsRejectionSampler(BaseRejectionSampler):
         elif self.shape_type == 'one_sample_per_dJ_summand':
             self.shape = (1,)
 
-    def sample(self, key, theta):
+    def sample(self, key, theta, states):
         def _accept_reject(carry, x):
             key = carry
             key, *subkeys = jax.random.split(key, num=4)
 
             if self.proposal_pdf_type == 'cur_policy':
-                proposed_sample = self.policy.sample(subkeys[0], theta, self.shape)
-                proposal_density_val = self.policy.pdf(subkeys[1], theta, proposed_sample)[..., 0]
+                proposed_sample = self.policy.sample_batch(subkeys[0], theta, states, self.shape)
+                proposal_density_val = self.policy.pdf(subkeys[1], theta, states, proposed_sample)[..., 0]
             elif self.proposal_pdf_type == 'uniform':
                 minval, maxval = -8.0, 8.0
                 proposed_sample = jax.random.uniform(subkeys[1], shape=self.shape, minval=minval, maxval=maxval)
@@ -132,30 +132,23 @@ class FixedNumAcceptedRejectionSampler(BaseRejectionSampler):
         }
 
     def cond_fn(self, val):
-        _, _, _, _, _, is_sampled_matrix = val
-        res = jnp.logical_not(jnp.all(is_sampled_matrix))
+        _, _, _, _, _, _, is_sampled = val
+        res = jnp.logical_not(jnp.all(is_sampled))
         return res
 
     def body_fn(self, val):
-        key, M, theta, samples, n, is_sampled_matrix = val
+        key, M, theta, states, samples, n, is_sampled = val
         key, *subkeys = jax.random.split(key, num=4)
 
         if self.proposal_pdf_type == 'cur_policy':
-            single_proposed_action = self.policy.sample(subkeys[0], theta, (1,))
-            proposal_density_val = self.policy.pdf(subkeys[1], theta, single_proposed_action)
+            proposed_action = self.policy.sample(subkeys[0], theta, states)
+            proposal_density_val = self.policy.pdf(subkeys[1], theta, states, proposed_action)[..., 0]
         elif self.proposal_pdf_type == 'uniform':
             minval, maxval = -8.0, 8.0
-            single_proposed_action = jax.random.uniform(subkeys[1], shape=(self.action_dim,), minval=minval, maxval=maxval)
+            proposed_action = jax.random.uniform(subkeys[1], shape=(self.action_dim,), minval=minval, maxval=maxval)
             proposal_density_val = (1/(maxval - minval))**(self.action_dim) * jnp.ones(shape=(1,))
 
-        if self.shape_type == 'one_sample_per_parameter':
-            # stack multiple copies of the proposed action to test against
-            # the acceptance criterion for each instrumental density
-            proposed_action = jnp.stack([jnp.stack([single_proposed_action] * 2)] * self.action_dim)
-        elif self.shape_type == 'one_sample_per_dJ_summand':
-            proposed_action = single_proposed_action
-
-        instrumental_density_val = jnp.exp(self.target_log_prob_fn(proposed_action))
+        instrumental_density_val = jnp.exp(self.target_log_prob_fn(states, proposed_action))
 
         # sample independent uniform variables to test the acceptance criterion
         u = jax.random.uniform(subkeys[2], shape=instrumental_density_val.shape)
@@ -163,41 +156,47 @@ class FixedNumAcceptedRejectionSampler(BaseRejectionSampler):
 
         # accept if meet criterion and not previously accepted
         acceptance_criterion = jnp.logical_and(acceptance_criterion,
-                                               jnp.logical_not(is_sampled_matrix))
+                                               jnp.logical_not(is_sampled))
 
         # update used sample count
         n = n + jnp.any(acceptance_criterion)
 
         # mark newly accepted actions
-        is_sampled_matrix = jnp.logical_or(is_sampled_matrix, acceptance_criterion)
+        is_sampled = jnp.logical_or(is_sampled, acceptance_criterion)
 
         if self.shape_type == 'one_sample_per_parameter':
             acceptance_criterion = jnp.broadcast_to(
-                acceptance_criterion[:, :, jnp.newaxis, jnp.newaxis],
-                shape=(self.action_dim, 2, 1, self.action_dim))
+                acceptance_criterion[:, jnp.newaxis, jnp.newaxis],
+                shape=samples.shape)
 
         samples = jnp.where(acceptance_criterion, proposed_action, samples)
 
-        return (key, M, theta, samples, n, is_sampled_matrix)
+        return (key, M, theta, states, samples, n, is_sampled)
 
-    def sample(self, key, theta):
-        def _accept_reject(key, theta, M):
+    def sample(self, key, theta, n_params, states):
+
+        def _accept_reject(key, states, theta, n_params, M):
+            """Runs Accept/Reject sampling for a single element of the sample batch"""
             if self.shape_type == 'one_sample_per_parameter':
-                samples = jnp.empty(shape=(self.action_dim, 2, 1, self.action_dim))
-                is_sampled_matrix = jnp.zeros(shape=(self.action_dim, 2)).astype(bool)
+                # add a dummy dimension 1 to be consistent with the HMC return shape
+                samples = jnp.empty((n_params, 1, self.action_dim))
+                is_sampled = jnp.zeros(n_params).astype(bool)
+                states = jnp.repeat(states[jnp.newaxis, ...], n_params, axis=0)
+                states = jnp.repeat(states[:, jnp.newaxis, ...], 1, axis=1)
             elif self.shape_type == 'one_sample_per_dJ_summand':
                 samples = jnp.empty(shape=(1, self.action_dim))
-                is_sampled_matrix = jnp.zeros(shape=(1,)).astype(bool)
+                is_sampled = jnp.zeros(shape=(1,)).astype(bool)
 
-            init_val = (key, M, theta, samples, 0, is_sampled_matrix)
-            _, _, _, samples, n_distinct, _ = jax.lax.while_loop(self.cond_fn, self.body_fn, init_val)
+            init_val = (key, M, theta, states, samples, 0, is_sampled)
+            _, _, _, _, samples, n_distinct, _ = jax.lax.while_loop(self.cond_fn, self.body_fn, init_val)
             return samples, n_distinct
 
         # run rejection sampling over a batch
         key, *batch_subkeys = jax.random.split(key, num=self.batch_size+1)
         batch_subkeys = jnp.asarray(batch_subkeys)
-        samples, n_distinct = jax.vmap(_accept_reject, (0, None, None), 0)(
-            batch_subkeys, theta, self.rejection_rate)
+        accept_reject_parallel_over_batch = jax.vmap(_accept_reject, (0, 0, None, None, None), 0)
+
+        samples, n_distinct = accept_reject_parallel_over_batch(batch_subkeys, states, theta, n_params, self.rejection_rate)
 
         # keep in buffer until statistics for the current iteration are updated
         self.n_distinct_samples_used_buffer.append(n_distinct[0])

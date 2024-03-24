@@ -115,15 +115,15 @@ def main(config):
         sampler = None
 
     #configure the training model advantage estimator
-    training_adv_estimator_config = config['training_adv_estimator']
-    training_adv_estimator_cls = registry.advantage_estimator_lookup_table[training_adv_estimator_config['type']]
-    training_adv_estimator_params = training_adv_estimator_config['params']
+    adv_estimator_config = config['adv_estimator']
+    adv_estimator_cls = registry.advantage_estimator_lookup_table[adv_estimator_config['type']]
+    adv_estimator_params = adv_estimator_config['params']
     key, subkey = jax.random.split(key)
-    training_adv_estimator = training_adv_estimator_cls(
+    adv_estimator = adv_estimator_cls(
         key=subkey,
-        **training_adv_estimator_params)
-    training_adv_estimator_state = training_adv_estimator.initialize_estimator_state(
-        key=subkey,
+        **adv_estimator_params)
+    key, adv_estimator_state = adv_estimator.initialize_estimator_state(
+        key=key,
         state_dim=state_dim,
         action_dim=action_dim,
     )
@@ -139,8 +139,8 @@ def main(config):
             sampler=sampler,
             optimizer=optimizer,
             models=models,
-            training_adv_estimator=training_adv_estimator,
-            training_adv_estimator_state=training_adv_estimator_state)
+            adv_estimator=adv_estimator,
+            adv_estimator_state=adv_estimator_state)
 
     # save stats dump
     save_to = config.get('save_to')
