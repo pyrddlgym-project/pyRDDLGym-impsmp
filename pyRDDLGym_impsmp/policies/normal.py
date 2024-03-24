@@ -53,12 +53,22 @@ class MultivarNormalHKParametrization:
         return normal_pdf * density_correction
 
     def diagonal_of_jacobian(self, key, theta, s, a):
-        """A computation of the diagonal of the Jacobian matrix that uses JAX
-        primitives, and works with any policy parametrization, but
-        computes the entire Jacobian before taking the diagonal. Therefore,
-        the computation time scales rather poorly with increasing dimension.
-        There is apparently no natural way in JAX of computing the diagonal
-        only without also computing all of the off-diagonal terms.
+        """A computation of the diagonal of the Jacobian matrix, i.e. the terms
+                                 \partial f_i
+                                 ------------    (i=1, 2, ..., n)
+                                 \partial x_i
+        where
+
+            F(x_1, ..., x_n) = (f_1(x_1, ..., x_n), ..., f_n(x_1, ..., x_n))
+
+        is a vector-valued function, which uses JAX primitives, and works with
+        any policy parametrization.
+
+        The disadvantage of this approach is that the entire Jacobian needs to
+        be computed before taking the diagonal. Therefore, the computation time
+        scales rather poorly with increasing dimension. There is apparently no
+        natural way in JAX of computing the diagonal only without also computing
+        all of the off-diagonal terms.
 
         See also:
             https://stackoverflow.com/questions/70956578/jacobian-diagonal-computation-in-jax
@@ -125,6 +135,7 @@ class MultivarNormalLinearParametrization(MultivarNormalHKParametrization):
         return self.pi.apply(theta, key, self.one_hot_inputs)
 
     def diagonal_of_jacobian(self, key, theta, s, a):
+        """Please see base class."""
         dpi = jax.jacrev(self.pdf, argnums=1)(key, theta, s, a)
         dpi = jax.tree_util.tree_map(lambda x: jnp.diagonal(x, axis1=0, axis2=3), dpi)
         dpi = jax.tree_util.tree_map(lambda x: jnp.diagonal(x, axis1=0, axis2=2), dpi)
@@ -132,7 +143,9 @@ class MultivarNormalLinearParametrization(MultivarNormalHKParametrization):
         return dpi
 
     def analytic_diagonal_of_jacobian(self, key, theta, s, a):
-        """The following computes the diagonal of the Jacobian analytically.
+        """Please see base class.
+
+        The following computes the diagonal of the Jacobian analytically.
         It valid ONLY when the policy is parametrized by a normal distribution
         with parameters
 
@@ -180,8 +193,9 @@ class MultivarNormalLinearStateDependentParametrization(MultivarNormalHKParametr
     all-zeros state.
 
     The number of parameters is equal to
-        (state_dim + 1) * (2 * action_dim)
-        |--input+bias--|  |--- output ---|
+
+                    (state_dim + 1) * (2 * action_dim)
+                    |--input+bias--|  |--- output ---|
 
     NOTE: If no state-dependence is required (for example, the problem is not
     sequential, i.e. has horizon=1), then MultivarNormalLinearParametrization
@@ -222,14 +236,32 @@ class MultivarNormalLinearStateDependentParametrization(MultivarNormalHKParametr
         return self.pi.apply(theta, key, state)
 
     def diagonal_of_jacobian(self, key, theta, s, a):
-        def flat_reduce(accumulator, item):
-            item = item.reshape(self.n_params, 1, -1)
-            accumulator = jnp.concatenate([accumulator, item], axis=2)
-            return accumulator
+        """Please see base class.
 
+        The input states and actions should have shape
+
+            (n_params, state_dim)
+            (n_params, action_dim)
+
+        respectively. For other shapes, vmap over the batch and chain indices.
+        """
         dpi = jax.jacrev(self.pdf, argnums=1)(key, theta, s, a)
-        dpi_matrix = jnp.squeeze(jax.tree_util.tree_reduce(flat_reduce, dpi))
+        dpi_w = dpi['linear']['w'].reshape(-1, 2 * self.state_dim * self.action_dim)
+        dpi_b = dpi['linear']['b'].reshape(-1, 2 * self.action_dim)
+        dpi_matrix = jnp.concatenate([dpi_w, dpi_b], axis=-1)
         return jnp.diagonal(dpi_matrix)
+
+    def unflatten_dJ(self, dJ):
+        """Converts a flattened dJ back into a tree (which is the required format)
+        for updating the policy parameters theta
+        """
+        break_idx = 2 * self.state_dim * self.action_dim
+        dJ_w = dJ[..., :break_idx].reshape(self.state_dim, 2 * self.action_dim)
+        dJ_b = dJ[..., break_idx:].reshape(2 * self.action_dim)
+        return {'linear': {
+            'w': dJ_w,
+            'b': dJ_b
+        }}
 
     def clip_theta(self, theta):
         """Clips the covariance parameters of the policy from below to the configured

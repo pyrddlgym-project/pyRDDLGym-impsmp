@@ -53,23 +53,7 @@ class SamplingModelQFunctionAdvEstimator(AdvEstimator):
         dQ_a_over_batch_and_time = jax.vmap(dQ_a_over_batch, in_axes=(None, None, 0, 0), out_axes=0)
         return dQ_a_over_batch_and_time(estimator_state['Q_theta'], key, states, actions)
 
-    def TD_loss(self, key, gamma, states, actions, rewards, Q_theta_target, Q_theta):
-        """The TD error is given by
-               [r(s_t, a_t) + gamma * Q(s_{t+1}, a_{t+1})] - Q(s_t, a_t)
-        The TD loss is the square of TD error summed over the rollout
-        and averaged across the rollout sample
-        """
-        Q_vals = self.Q.apply(Q_theta, key, states, actions)
-        Q_val_targets = self.Q.apply(Q_theta_target, key, states, actions)
-        TD_err = (rewards[..., :-1] + gamma * Q_val_targets[..., 1:]) - Q_vals[..., :-1]
-        sq_TD_err = TD_err * TD_err
-        cmlt_sq_TD_err = jnp.sum(sq_TD_err, axis=1)
-        loss = jnp.mean(cmlt_sq_TD_err, axis=0)
-        return loss
-
     def estimate(self, key, states, actions, _, estimator_state):
-        print(states.shape)
-        print(actions.shape)
         advantages = self.Q.apply(estimator_state['Q_theta'], key, states, actions)
         return key, advantages, estimator_state
 
@@ -85,21 +69,38 @@ class SamplingModelQFunctionAdvEstimator(AdvEstimator):
         """Called when it is not time to call 'update_Q_target'"""
         return estimator_state
 
-    def update_theta(self, key):
-        """TODO: make this work"""
+    def TD_loss(self, key, gamma, states, actions, rewards, next_states, next_actions, Q_theta_target, Q_theta):
+        """The TD error is given by
+               [r(s_t, a_t) + gamma * Q(s_{t+1}, a_{t+1})] - Q(s_t, a_t)
+        The TD loss is the square of TD error summed over the rollout
+        and averaged across the rollout sample
+        """
+        Q_vals = self.Q.apply(Q_theta, key, states, actions)
+        Q_val_targets = self.Q.apply(Q_theta_target, key, next_states, next_actions)
+        TD_err = (rewards + gamma * Q_val_targets) - Q_vals
+        sq_TD_err = TD_err * TD_err
+        loss = jnp.mean(sq_TD_err, axis=(0, 1, 2))
+        return loss
+
+    def policy_eval(self, key, states, actions, rewards, next_states, next_actions, estimator_state):
+        """Updates the Q-values for the current policy by performing policy evaluation
+        (minimizing the TD loss)
+        """
+        B, P, C = rewards.shape # Batch size, Num params, Num chains
+
         # update Q to minimize TD-loss
         key, subkey = jax.random.split(key)
-        dTD_loss = jax.grad(self.TD_loss, argnums=6)
-        grads = dTD_loss(subkey, self.gamma, states, actions, rewards, estimator_state['Q_theta_target'], estimator_state['Q_theta'])
+        dTD_loss = jax.grad(self.TD_loss, argnums=8)
+        grads = dTD_loss(subkey, self.gamma, states, actions, rewards, next_states, next_actions, estimator_state['Q_theta_target'], estimator_state['Q_theta'])
         grads = jax.tree_util.tree_map(lambda grad_term: jnp.clip(grad_term, -self.grad_clip_val, self.grad_clip_val), grads)
         updates, estimator_state['opt_state'] = self.optimizer.update(grads, estimator_state['opt_state'])
         estimator_state['Q_theta'] = optax.apply_updates(estimator_state['Q_theta'], updates)
 
-        estimator_state['target_update_counter'] += T
+        estimator_state['target_update_counter'] += 1
         estimator_state = jax.lax.cond(
             estimator_state['target_update_counter'] > self.target_update_freq,
             self.update_Q_target,
             self.skip_update_Q_target,
             estimator_state)
 
-        return key, advantages, estimator_state
+        return key, estimator_state

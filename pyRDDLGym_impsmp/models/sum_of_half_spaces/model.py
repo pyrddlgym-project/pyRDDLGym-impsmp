@@ -126,12 +126,14 @@ class SumOfHalfSpacesModel:
             return {'a': policy_sample_fn(key, policy_params['theta'], states)}
 
         self.compiler.compile()
+        self.step_sampler = self.compiler.compile_transition()
         self.rollout_sampler = self.compiler.compile_rollouts(
             policy=policy,
             n_steps=rollout_horizon,
             n_batch=n_rollouts)
 
-        # repeat subs over the batch
+        # rollouts are batched in parallel. it is useful to repeat subs over the batch
+        # and store here
         subs = {}
         for (name, value) in init_state_subs.items():
             value = jnp.array(value)[jnp.newaxis, ...]
@@ -140,6 +142,10 @@ class SumOfHalfSpacesModel:
         for (state, next_state) in self.model.next_state.items():
             subs[next_state] = subs[state]
         self.subs = subs
+
+        # single-step transitions are compiled unbatched
+        # therefore, there is no need to repeat subs over the batch
+        self.step_subs = init_state_subs
 
     def compile_relaxed(self, compiler_kwargs):
         """Compiles batched rollouts in the relaxed RDDL model.
@@ -165,6 +171,7 @@ class SumOfHalfSpacesModel:
             return {'a': policy_sample_fn(key, policy_params['theta'], states)}
 
         self.compiler.compile()
+        self.step_sampler = self.compiler.compile_transition()
         self.rollout_sampler = self.compiler.compile_rollouts(
             policy=policy,
             n_steps=rollout_horizon,
@@ -181,6 +188,18 @@ class SumOfHalfSpacesModel:
             subs[next_state] = subs[state]
         self.subs = subs
 
+        # single-step transitions are compiled unbatched
+        # therefore, there is no need to repeat subs over the batch
+        # nevertheless, cast as real
+        step_subs = {}
+        for (name, value) in init_state_subs.items():
+            value = value.astype(self.compiler.REAL)
+            step_subs[name] = value
+        for (state, next_state) in self.model.next_state.items():
+            step_subs[next_state] = step_subs[state]
+        self.step_subs = step_subs
+
+
     def batch_generate_initial_state(self, key, batch_shape):
         """Generates the initial states over a batch of generic shape.
         The batch does not have to have shape (n_rollouts, state_dim).
@@ -189,6 +208,17 @@ class SumOfHalfSpacesModel:
         key, subkey = jax.random.split(key)
         init_states = generate_initial_states(subkey, self.initial_state_config, batch_shape)
         return key, init_states
+
+    def step(self, key, states, actions, theta, shift_reward=False):
+        self.step_subs['s'] = states
+        key, subkey = jax.random.split(key)
+        actions_dict = {'a': actions}
+        steps = self.step_sampler(subkey, actions_dict, self.step_subs, self.compiler.model_params)
+
+        next_states = steps['pvar']['s']
+        rewards = steps['reward'] + shift_reward * self.reward_shift_val
+
+        return next_states, rewards
 
     def rollout(self, key, init_states, theta, shift_reward=False):
         """Rolls out the policy with parameters theta over a batch

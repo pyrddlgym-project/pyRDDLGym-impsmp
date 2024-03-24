@@ -7,10 +7,6 @@ VALID_PROPOSAL_PDF_TYPES = (
     'cur_policy',
     'uniform',
 )
-VALID_SHAPE_TYPES = (
-    'one_sample_per_parameter',
-    'one_sample_per_dJ_summand',
-)
 VALID_REJECTION_RATE_TYPES = (
     'constant',
     'linear_ramp',
@@ -36,9 +32,6 @@ class BaseRejectionSampler:
 
         self.proposal_pdf_type = self.config['proposal_pdf_type']
         assert self.proposal_pdf_type in VALID_PROPOSAL_PDF_TYPES
-
-        self.shape_type = self.config['sample_shape_type']
-        assert self.shape_type in VALID_SHAPE_TYPES
 
         self.rejection_rate_type = self.config['rejection_rate_schedule']['type']
         assert self.rejection_rate_type in VALID_REJECTION_RATE_TYPES
@@ -85,6 +78,7 @@ class FixedNumTrialsRejectionSampler(BaseRejectionSampler):
                  config):
         super().__init__(n_iters, batch_size, action_dim, policy, config)
 
+        #TODO: Update this
         if self.shape_type == 'one_sample_per_parameter':
             self.shape = (self.action_dim, 2, 1)
         elif self.shape_type == 'one_sample_per_dJ_summand':
@@ -164,10 +158,9 @@ class FixedNumAcceptedRejectionSampler(BaseRejectionSampler):
         # mark newly accepted actions
         is_sampled = jnp.logical_or(is_sampled, acceptance_criterion)
 
-        if self.shape_type == 'one_sample_per_parameter':
-            acceptance_criterion = jnp.broadcast_to(
-                acceptance_criterion[:, jnp.newaxis, jnp.newaxis],
-                shape=samples.shape)
+        acceptance_criterion = jnp.broadcast_to(
+            acceptance_criterion[:, jnp.newaxis, jnp.newaxis],
+            shape=samples.shape)
 
         samples = jnp.where(acceptance_criterion, proposed_action, samples)
 
@@ -177,16 +170,8 @@ class FixedNumAcceptedRejectionSampler(BaseRejectionSampler):
 
         def _accept_reject(key, states, theta, n_params, M):
             """Runs Accept/Reject sampling for a single element of the sample batch"""
-            if self.shape_type == 'one_sample_per_parameter':
-                # add a dummy dimension 1 to be consistent with the HMC return shape
-                samples = jnp.empty((n_params, 1, self.action_dim))
-                is_sampled = jnp.zeros(n_params).astype(bool)
-                states = jnp.repeat(states[jnp.newaxis, ...], n_params, axis=0)
-                states = jnp.repeat(states[:, jnp.newaxis, ...], 1, axis=1)
-            elif self.shape_type == 'one_sample_per_dJ_summand':
-                samples = jnp.empty(shape=(1, self.action_dim))
-                is_sampled = jnp.zeros(shape=(1,)).astype(bool)
-
+            samples = jnp.empty(states.shape)
+            is_sampled = jnp.zeros(states.shape[0]).astype(bool)
             init_val = (key, M, theta, states, samples, 0, is_sampled)
             _, _, _, _, samples, n_distinct, _ = jax.lax.while_loop(self.cond_fn, self.body_fn, init_val)
             return samples, n_distinct
