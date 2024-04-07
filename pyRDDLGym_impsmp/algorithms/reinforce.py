@@ -16,8 +16,8 @@ weighting_map = jax.vmap(
 
 @functools.partial(
     jax.jit,
-    static_argnames=('n_shards', 'batch_size', 'epsilon', 'policy', 'model', 'adv_estimator'))
-def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, n_shards, epsilon, policy, model, adv_estimator, adv_estimator_state):
+    static_argnames=('batch_size', 'epsilon', 'policy', 'model', 'adv_estimator'))
+def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, epsilon, policy, model, adv_estimator, adv_estimator_state):
     """Computes an estimate of dJ^pi over a sample of rolled out trajectories
 
         B = {tau_0, tau_1, ..., tau_{|B|-1}}
@@ -35,7 +35,6 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, n_shards, epsilon,
         key: JAX random key
         theta: Current policy pi parameters
         batch_size: Total number of samples
-        n_shards: Number of shards to divide the batch into
         epsilon: Small numerical stability constant
         policy: Object carrying static policy parameters
                 (the values of the parameters are passed separately
@@ -51,13 +50,10 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, n_shards, epsilon,
     """
     jacobian = jax.jacrev(policy.pdf, argnums=1)
 
-    def compute_dJ_hat_summands_for_shard(init, _):
-        """Compute dJ hat for the current sample, dividing the computation up
-        into shards of size model.n_rollouts (this can be useful for fitting
-        the computation into GPU VRAM, for example)
-        """
+    def _compute_dJ_summand(init, _):
+        """Generates a single summand in the expression for the dJ estimator"""
         key, adv_estimator_state = init
-        key, init_states = model.batch_generate_initial_state(key, (model.n_rollouts, model.state_dim))
+        key, init_states = model.batch_generate_initial_state(key, (model.state_dim,))
         key, states, actions, rewards = model.rollout_parametrized_policy(key, init_states, theta)
         key, advantages, adv_estimator_state = adv_estimator.estimate(key, states, actions, rewards, adv_estimator_state)
         pi_inv = 1 / (policy.pdf(key, theta, states, actions) + epsilon)
@@ -71,8 +67,8 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, n_shards, epsilon,
         return carry, result
 
     carry, result = jax.lax.scan(
-        compute_dJ_hat_summands_for_shard,
-        (key, adv_estimator_state), [None] * n_shards, length=n_shards)
+        _compute_dJ_summand,
+        (key, adv_estimator_state), [None] * batch_size, length=batch_size)
     (key, adv_estimator_state) = carry
     (actions, rewards, dJ_summands) = result
 
@@ -84,27 +80,25 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, n_shards, epsilon,
 
     return key, dJ_hat, adv_estimator_state, batch_stats
 
-@functools.partial(jax.jit, static_argnames=('eval_n_shards', 'eval_batch_size', 'policy', 'model'))
-def evaluate_policy(key, it, algo_stats, eval_n_shards, eval_batch_size, theta, policy, model):
-    key, init_states = model.batch_generate_initial_state(key, (model.n_rollouts, model.state_dim))
-    key, states, actions, rewards = model.rollout_parametrized_policy(key, init_states, theta)
+@functools.partial(jax.jit, static_argnames=('eval_batch_size', 'policy', 'model'))
+def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
+    key, init_states = model.batch_generate_initial_state(key, (eval_batch_size, model.state_dim))
+    key, *subkeys = jax.random.split(key, num=eval_batch_size+1)
+    subkeys = jnp.asarray(subkeys)
+    _, states, actions, rewards = jax.vmap(
+        model.rollout_parametrized_policy, (0, 0, None), (0, 0, 0, 0))(subkeys, init_states, theta)
     rewards = jnp.sum(rewards, axis=1) # sum rewards along the time axis
     key, subkey = jax.random.split(key)
     policy_mean, policy_cov = policy.apply(subkey, theta, states)
 
     algo_stats['reward_mean']  = algo_stats['reward_mean'].at[it].set(jnp.mean(rewards))
     algo_stats['reward_std']   = algo_stats['reward_std'].at[it].set(jnp.std(rewards))
-    algo_stats['reward_sterr'] = algo_stats['reward_sterr'].at[it].set(algo_stats['reward_std'][it] / jnp.sqrt(model.n_rollouts))
+    algo_stats['reward_sterr'] = algo_stats['reward_sterr'].at[it].set(algo_stats['reward_std'][it] / jnp.sqrt(eval_batch_size))
     algo_stats['policy_mean']  = algo_stats['policy_mean'].at[it].set(jnp.mean(policy_mean, axis=(0,1)))
     algo_stats['policy_cov']   = algo_stats['policy_cov'].at[it].set(jnp.diag(jnp.mean(policy_cov, axis=(0,1))))
     return key, algo_stats
 
-@functools.partial(
-    jax.jit,
-    static_argnames=(
-        'batch_size',
-        'save_dJ')
-    )
+@functools.partial(jax.jit, static_argnames=('batch_size', 'save_dJ'))
 def update_reinforce_stats(key, it, algo_stats, batch_stats, batch_size, save_dJ):
     """Updates the REINFORCE statistics using the statistics returned
     from the computation of dJ_hat for the current sample as well as
@@ -143,22 +137,13 @@ def print_reinforce_report(it, algo_stats, subt0, subt1):
 
 def reinforce(key, n_iters, config, bijector, policy, sampler, optimizer, models, adv_estimator, adv_estimator_state):
     """Runs the REINFORCE algorithm"""
-    action_dim = policy.action_dim
+    state_dim = model.state_dim
+    action_dim = model.action_dim
     batch_size = config['batch_size']
     eval_batch_size = config['eval_batch_size']
 
     train_model = models['train_model']
     eval_model = models['eval_model']
-
-    # compute the necessary number of shards
-    n_shards = int(batch_size // train_model.n_rollouts)
-    eval_n_shards = int(eval_batch_size // eval_model.n_rollouts)
-    assert n_shards > 0, (
-         '[reinforce] Please check that batch_size > train_model.n_rollouts.'
-        f' batch_size={batch_size}, train_model.n_rollouts={train_model.n_rollouts}')
-    assert eval_n_shards > 0, (
-        '[reinforce] Please check that eval_batch_size > eval_model.n_rollouts.'
-        f' eval_batch_size={eval_batch_size}, eval_model.n_rollouts={eval_model.n_rollouts}')
 
     epsilon = config.get('epsilon', 1e-12)
     save_dJ = config.get('save_dJ', False)
@@ -196,11 +181,11 @@ def reinforce(key, n_iters, config, bijector, policy, sampler, optimizer, models
     for it in range(n_iters):
         subt0 = timer()
 
-        key, algo_stats = evaluate_policy(key, it, algo_stats, eval_n_shards, eval_batch_size, policy.theta, policy, eval_model)
+        key, algo_stats = evaluate_policy(key, it, algo_stats, eval_batch_size, policy.theta, policy, eval_model)
 
         key, dJ_hat, adv_estimator_state, batch_stats = compute_reinforce_dJ_hat_estimate(
             key, policy.theta,
-            batch_size, n_shards, epsilon, policy, train_model,
+            batch_size, epsilon, policy, train_model,
             adv_estimator, adv_estimator_state)
 
         updates, opt_state = optimizer.update(dJ_hat, opt_state)
@@ -216,10 +201,5 @@ def reinforce(key, n_iters, config, bijector, policy, sampler, optimizer, models
         'n_iters': n_iters,
         'config': config,
     })
-
-    import matplotlib.pyplot as plt
-    plt.plot(range(n_iters), algo_stats['reward_mean'])
-    plt.savefig('plot.png')
-    print('saved')
 
     return key, algo_stats

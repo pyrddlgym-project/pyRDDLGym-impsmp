@@ -22,21 +22,18 @@
               "scale": 2.0
             }
           },
-          "compiler_kwargs": {
-            "n_rollouts": 32
-          }
+          "compiler_kwargs": {}
         },
         "eval_model": {
           "is_relaxed": false,
           "initial_state_config": {
-            "type": "constant",
+            "type": "normal",
             "params": {
-              "value": 0.0
+              "mean": 0.0,
+              "scale": 2.0
             }
           },
-          "compiler_kwargs": {
-            "n_rollouts": 32
-          }
+          "compiler_kwargs": {}
         }
       }
     }

@@ -16,6 +16,7 @@ import pyRDDLGym_impsmp.registry
 
 
 def compute_future_discounted_traj_rewards(rewards, gamma):
+    #TODO: Update to make unbatched
     """Given a batch of reward sequences of the form
            r_0, r_1, r_2, ..., r_{T-1}
     and a discount factor gamma, computes the quantities
@@ -42,12 +43,14 @@ class TotalTrajRewardAdvEstimator(AdvEstimator):
         return key, {}
 
     def estimate(self, key, states, actions, rewards, estimator_state):
-        T = rewards.shape[1]
-        trajrews = jnp.sum(rewards, axis=1)
-        advantages = jnp.repeat(trajrews[:,jnp.newaxis], T, axis=1)
+        T = rewards.shape[0]
+        trajrews = jnp.sum(rewards)
+        advantages = jnp.repeat(trajrews, T)
         return key, advantages, estimator_state
 
 
+
+# TODO: Update below to make un-batched
 class FutureTrajRewardAdvEstimator(AdvEstimator):
     """The advantages are estimated using the trajectory rewards beginning
     with the current timestep, i.e.
