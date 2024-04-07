@@ -62,10 +62,8 @@ def unnormalized_log_instr_density_vector(key, policy, model, theta, init_state,
     return jnp.log(density_vector)
 
 
-@functools.partial(
-    jax.jit,
-    static_argnames=('n_shards', 'batch_size', 'epsilon', 'policy', 'light_model', 'train_model'))
-def compute_impsamp_dJ_hat_estimate(key, batch_size, n_shards, epsilon, policy, light_model, train_model, theta, init_states, actions):
+@functools.partial(jax.jit, static_argnames=('epsilon', 'policy', 'light_model', 'train_model'))
+def compute_impsamp_dJ_hat_estimate(key, epsilon, policy, light_model, train_model, theta, init_states, actions):
     """***** TODO:
       Update the docstring
       Add Z-estimate
@@ -87,8 +85,6 @@ def compute_impsamp_dJ_hat_estimate(key, batch_size, n_shards, epsilon, policy, 
     Args:
         key: JAX random key
         theta: Current policy pi parameters
-        batch_size: Total number of samples
-        n_shards: Number of shards to divide the batch into
         epsilon: Small numerical stability constant
         policy: Object carrying static policy parameters
                 (the values of the parameters are passed separately
@@ -104,11 +100,9 @@ def compute_impsamp_dJ_hat_estimate(key, batch_size, n_shards, epsilon, policy, 
     """
     B, P, T, A = actions.shape
 
-    key, *subkeys = jax.random.split(key, num=(B + 1))
-    subkeys = jnp.asarray(subkeys)
-
-    def compute_dJ_hat_summands(key, init_states, actions):
-        subkeys = jax.random.split(key, num=(2 * P))
+    def _compute_dJ_summands(key, x):
+        init_states, actions = x
+        key, *subkeys = jax.random.split(key, num=(2 * P) + 1)
         light_subkeys, train_subkeys = jnp.asarray(subkeys[:P]), jnp.asarray(subkeys[P:])
 
         _, light_s, light_a, light_r = jax.vmap(
@@ -122,70 +116,10 @@ def compute_impsamp_dJ_hat_estimate(key, batch_size, n_shards, epsilon, policy, 
         train_dpi = policy.diagonal_of_jacobian_traj(key, theta, train_s, train_a)
 
         dJ_summand = train_adv_est * train_dpi / (jnp.abs(light_adv_est * light_dpi) + epsilon)
-        return dJ_summand
+        return key, dJ_summand
 
-    dJ_hat_summands = jax.vmap(compute_dJ_hat_summands, (0, 0, 0), 0)(subkeys, init_states, actions)
-    flat_dJ_hat = jnp.mean(dJ_hat_summands, axis=0)
-
-    # Put back into a dm-haiku tree shape in order to be useful
-    # for updating the parameter vector theta
-    dJ_hat = policy.unflatten_dJ(flat_dJ_hat)
-
-    batch_stats = {}
-    return key, dJ_hat, batch_stats
-
-
-@functools.partial(jax.jit, static_argnames=('n_shards', 'epsilon', 'policy', 'model'))
-def compute_impsamp2_dJ_hat_estimate(
-    key, theta, s, a, cmlt_r, sampling_model_Q_vals, Z_estimates,
-    n_shards, epsilon, policy, model):
-    """**** TODO: Update the docstring ****
-
-        Computes an estimate of dJ^pi over a sample of rolled out trajectories
-
-        B = {tau_0, tau_1, ..., tau_{|B|-1}}
-
-    using the REINFORCE formula
-
-        dJ hat = 1/|B| * sum_{tau in B} [ R(tau) * grad log pi(tau) ]
-
-    where
-        dJ denotes the gradient of J^pi with respect to theta,
-        R(tau) = sum_{t=1}^T R(s_t, a_t)
-        grad log pi(tau) = sum_{t=1}^T grad log pi(s_t, a_t)
-
-    Args:
-        key: JAX random key
-        theta: Current policy pi parameters
-        batch_size: Total number of samples
-        n_shards: Number of shards to divide the batch into
-        epsilon: Small numerical stability constant
-        policy: Object carrying static policy parameters
-                (the values of the parameters are passed separately
-                 in theta)
-        model: Training RDDL model
-
-    Returns:
-        key: Mutated JAX random key
-        dJ_hat: dJ estimator
-        batch_stats: Dictionary of statistics for the current sample
-            'dJ': Individual summands of the dJ estimator
-            'actions': Sampled actions
-    """
-    dpi_B = jax.vmap(policy.diagonal_of_jacobian, (None, None, 0, 0), 0)
-    dpi_BC = jax.vmap(dpi_B, (None, None, 2, 2), 2)
-
-    key, subkey = jax.random.split(key)
-    dpi = dpi_BC(subkey, theta, s, a)
-
-    Q_estimate_ratio = cmlt_r / (sampling_model_Q_vals + epsilon)
-    dpi_sgn = dpi / (jnp.abs(dpi) + epsilon)
-
-    flat_dJ_hat = Q_estimate_ratio * dpi_sgn / (Z_estimates + epsilon)
-
-    # Take averages over B (Sample batch axis) and C (Sampler chain axis),
-    # leaving P (Policy parameter axis)
-    flat_dJ_hat = jnp.mean(flat_dJ_hat, axis=(0, 2))
+    key, dJ_summands = jax.lax.scan(_compute_dJ_summands, init=key, xs=(init_states, actions))
+    flat_dJ_hat = jnp.mean(dJ_summands, axis=0)
 
     # Put back into a dm-haiku tree shape in order to be useful
     # for updating the parameter vector theta
@@ -194,27 +128,26 @@ def compute_impsamp2_dJ_hat_estimate(
     batch_stats = {}
     return key, dJ_hat, batch_stats
 
-@functools.partial(jax.jit, static_argnames=('eval_n_shards', 'eval_batch_size', 'policy', 'model'))
-def evaluate_policy(key, it, algo_stats, eval_n_shards, eval_batch_size, theta, policy, model):
-    key, init_states = model.batch_generate_initial_state(key, (model.n_rollouts, model.state_dim))
-    key, states, actions, rewards = model.rollout_parametrized_policy(key, init_states, theta)
+
+@functools.partial(jax.jit, static_argnames=('eval_batch_size', 'policy', 'model'))
+def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
+    key, init_states = model.batch_generate_initial_state(key, (eval_batch_size, model.state_dim))
+    key, *subkeys = jax.random.split(key, num=eval_batch_size+1)
+    subkeys = jnp.asarray(subkeys)
+    _, states, actions, rewards = jax.vmap(
+        model.rollout_parametrized_policy, (0, 0, None), (0, 0, 0, 0))(subkeys, init_states, theta)
     rewards = jnp.sum(rewards, axis=1) # sum rewards along the time axis
     key, subkey = jax.random.split(key)
     policy_mean, policy_cov = policy.apply(subkey, theta, states)
 
     algo_stats['reward_mean']  = algo_stats['reward_mean'].at[it].set(jnp.mean(rewards))
     algo_stats['reward_std']   = algo_stats['reward_std'].at[it].set(jnp.std(rewards))
-    algo_stats['reward_sterr'] = algo_stats['reward_sterr'].at[it].set(algo_stats['reward_std'][it] / jnp.sqrt(model.n_rollouts))
+    algo_stats['reward_sterr'] = algo_stats['reward_sterr'].at[it].set(algo_stats['reward_std'][it] / jnp.sqrt(eval_batch_size))
     algo_stats['policy_mean']  = algo_stats['policy_mean'].at[it].set(jnp.mean(policy_mean, axis=(0,1)))
     algo_stats['policy_cov']   = algo_stats['policy_cov'].at[it].set(jnp.diag(jnp.mean(policy_cov, axis=(0,1))))
     return key, algo_stats
 
-@functools.partial(
-    jax.jit,
-    static_argnames=(
-        'batch_size',
-        'save_dJ')
-    )
+@functools.partial(jax.jit, static_argnames=('batch_size', 'save_dJ'))
 def update_impsamp_stats(key, it, algo_stats, batch_stats, batch_size, save_dJ):
     """Updates the REINFORCE statistics using the statistics returned
     from the computation of dJ_hat for the current sample as well as
@@ -274,16 +207,6 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
 
     eval_batch_size = config['eval_batch_size']
 
-    # compute the necessary number of shards
-    n_shards = int(B // train_model.n_rollouts)
-    eval_n_shards = int(eval_batch_size // eval_model.n_rollouts)
-    assert n_shards > 0, (
-        f'[impsamp] Please check that batch_size > train_model.n_rollouts.'
-        f' batch_size={B}, train_model.n_rollouts={train_model.n_rollouts}')
-    assert eval_n_shards > 0, (
-        f'[impsamp] Please check that eval_batch_size > eval_model.n_rollouts.'
-        f' eval_batch_size={eval_batch_size}, eval_model.n_rollouts={eval_model.n_rollouts}')
-
     Z_estimator_config = config['Z_estimator_config']
 
     epsilon = config.get('epsilon', 1e-12)
@@ -330,7 +253,7 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
     for it in range(n_iters):
         subt0 = timer()
 
-        key, algo_stats = evaluate_policy(key, it, algo_stats, eval_n_shards, eval_batch_size, policy.theta, policy, eval_model)
+        key, algo_stats = evaluate_policy(key, it, algo_stats, eval_batch_size, policy.theta, policy, eval_model)
 
         # generate the initial states
         key, init_states = train_model.batch_generate_initial_state(key, init_state_shape)
@@ -357,7 +280,7 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
             break
 
         key, dJ_hat, batch_stats = compute_impsamp_dJ_hat_estimate(
-            key, B, n_shards, epsilon, policy, sampling_model, train_model, policy.theta, init_states[:, 0], actions)
+            key, epsilon, policy, sampling_model, train_model, policy.theta, init_states[:, 0], actions)
 
         # update the policy
         updates, opt_state = optimizer.update(dJ_hat, opt_state)
@@ -375,10 +298,5 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
         'n_iters': n_iters,
         'config': config,
     })
-
-    import matplotlib.pyplot as plt
-    plt.plot(range(n_iters), algo_stats['reward_mean'])
-    plt.savefig('plot.png')
-    print('saved')
 
     return key, algo_stats

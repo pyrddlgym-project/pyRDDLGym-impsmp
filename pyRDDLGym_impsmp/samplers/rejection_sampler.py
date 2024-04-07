@@ -148,9 +148,7 @@ class FixedNumAcceptedRejectionSampler(BaseRejectionSampler):
         if self.proposal_pdf_type == 'rollout_cur_policy':
             parallel_rollout_keys = jnp.asarray(jax.random.split(subkeys[0], num=P))
             generate_parallel_traj = jax.vmap(self.model.rollout_parametrized_policy, (0, 0, None), (0, 0, 0, 0))
-            _, states, actions, _ = generate_parallel_traj(parallel_rollout_keys, init_states[:, jnp.newaxis, :], theta)
-            states = states[:, 0, :, :]
-            proposed_actions = actions[:, 0, :, :]
+            _, states, proposed_actions, _ = generate_parallel_traj(parallel_rollout_keys, init_states, theta)
             proposal_density_vals = self.policy.pdf_traj(subkeys[1], theta, states, proposed_actions)
 
         elif self.proposal_pdf_type == 'sample_uniform':

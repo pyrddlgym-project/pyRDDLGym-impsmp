@@ -144,15 +144,11 @@ class SumOfHalfSpacesModel:
 
 
     def compile(self, compiler_kwargs):
-        """Compiles batched rollouts in the non-relaxed RDDL model.
-        The batch size is given by n_rollouts. Each rollout takes
-        'horizon' many steps.
+        """Compiles rollouts in the non-relaxed RDDL model.
+        Each rollout takes 'horizon' many steps.
         """
-        n_rollouts = compiler_kwargs['n_rollouts']
         policy_sample_fn = compiler_kwargs['policy_sample_fn']
         use64bit = compiler_kwargs.get('use64bit', True)
-
-        self.n_rollouts = n_rollouts
 
         self.compiler = pyRDDLGym_jax.core.compiler.JaxRDDLCompiler(
             rddl=self.model,
@@ -180,18 +176,7 @@ class SumOfHalfSpacesModel:
         self.parametrized_policy_rollout_sampler = self.compiler.compile_rollouts(
             policy=parametrized_stochastic_policy,
             n_steps=rollout_horizon,
-            n_batch=n_rollouts)
-
-        # repeat subs several times (for when batched rollouts
-        # are generated)
-        subs = {}
-        for (name, value) in init_state_subs.items():
-            value = jnp.array(value)[jnp.newaxis, ...]
-            value_repeated = jnp.repeat(value, repeats=n_rollouts, axis=0)
-            subs[name] = value_repeated
-        for (state, next_state) in self.model.next_state.items():
-            subs[next_state] = subs[state]
-        self.subs = subs
+            n_batch=1)
 
         # compiling rollouts that are used to evaluate a sequence of actions.
         # the actions a0, a1, ..., aT are passed in the hyperparams dictionary.
@@ -204,7 +189,16 @@ class SumOfHalfSpacesModel:
             n_steps=rollout_horizon,
             n_batch=1)
 
-        # add dummy lead-axis
+        # add dummy lead-axis to fit expected semantics
+        subs = {}
+        for (name, value) in init_state_subs.items():
+            value = jnp.array(value)[jnp.newaxis, ...]
+            subs[name] = value
+        for (state, next_state) in self.model.next_state.items():
+            subs[next_state] = subs[state]
+        self.subs = subs
+
+
         subs = {}
         for (name, value) in init_state_subs.items():
             value = jnp.array(value)[jnp.newaxis, ...]
@@ -215,14 +209,12 @@ class SumOfHalfSpacesModel:
 
     def compile_relaxed(self, compiler_kwargs):
         """Compiles batched rollouts in the relaxed RDDL model.
-        The batch size is given by n_rollouts.
+        Each rollout takes 'horizon' many steps.
         """
-        n_rollouts = compiler_kwargs['n_rollouts']
         weight = compiler_kwargs.get('weight', 15)
         policy_sample_fn = compiler_kwargs['policy_sample_fn']
         use64bit = compiler_kwargs.get('use64bit', True)
 
-        self.n_rollouts = n_rollouts
         self.weight = weight
 
         self.compiler = pyRDDLGym_jax.core.planner.JaxRDDLCompilerWithGrad(
@@ -259,19 +251,7 @@ class SumOfHalfSpacesModel:
         self.parametrized_policy_rollout_sampler = self.compiler.compile_rollouts(
             policy=parametrized_stochastic_policy,
             n_steps=rollout_horizon,
-            n_batch=n_rollouts)
-
-        # repeat subs over the batch and cast as real numbers
-        subs = {}
-        for (name, value) in init_state_subs.items():
-            value = value.astype(self.compiler.REAL)
-            value = jnp.array(value)[jnp.newaxis, ...]
-            value_repeated = jnp.repeat(value, repeats=n_rollouts, axis=0)
-            subs[name] = value_repeated
-        for (state, next_state) in self.model.next_state.items():
-            subs[next_state] = subs[state]
-        self.subs = subs
-
+            n_batch=1)
 
         # compiling rollouts that are used to evaluate a sequence of actions.
         # the actions a0, a1, ..., aT are passed in the hyperparams dictionary.
@@ -283,6 +263,16 @@ class SumOfHalfSpacesModel:
             policy=deterministic_action_traj_policy,
             n_steps=rollout_horizon,
             n_batch=1)
+
+        # repeat subs over the batch and cast as real numbers
+        subs = {}
+        for (name, value) in init_state_subs.items():
+            value = value.astype(self.compiler.REAL)
+            value = jnp.array(value)[jnp.newaxis, ...]
+            subs[name] = value
+        for (state, next_state) in self.model.next_state.items():
+            subs[next_state] = subs[state]
+        self.subs = subs
 
         # cast as real numbers and add dummy lead-axis
         subs = {}
@@ -322,7 +312,7 @@ class SumOfHalfSpacesModel:
         Args:
             key: jax.random.PRNGKey
                 Random key
-            init_states: jnp.array shape=(n_rollouts, state_dim)
+            init_states: jnp.array shape=(state_dim,)
                 Array of initial states
             theta: pyTree
                 Current policy parameters
@@ -333,12 +323,12 @@ class SumOfHalfSpacesModel:
         Returns:
             key: jax.random.PRNGKey
                 Mutated key
-            states: jnp.array shape=(n_rollouts, horizon, state_dim)
-            actions: jnp.array shape=(n_rollouts, horizon, action_dim)
-            rewards: jnp.array shape=(n_rollouts, horizon)
+            states: jnp.array shape=(horizon, state_dim)
+            actions: jnp.array shape=(horizon, action_dim)
+            rewards: jnp.array shape=(horizon,)
                 Batch of trajectories
         """
-        self.subs['s'] = init_states
+        self.subs['s'] = init_states[jnp.newaxis, :]
 
         key, subkey = jax.random.split(key)
         rollouts = self.parametrized_policy_rollout_sampler(
@@ -350,12 +340,11 @@ class SumOfHalfSpacesModel:
 
         # add the initial state and remove the final state
         # from the trajectory of states generated during the rollout
-        init_states = init_states[:, jnp.newaxis, ...]
-        truncated_state_traj = rollouts['pvar']['s'][:, :-1, ...]
-        states = jnp.concatenate([init_states, truncated_state_traj], axis=1)
-        actions = rollouts['action']['a']
+        truncated_state_traj = rollouts['pvar']['s'][0, :-1]
+        states = jnp.concatenate([init_states[jnp.newaxis, :], truncated_state_traj], axis=0)
+        actions = rollouts['action']['a'][0]
         # shift rewards if required
-        rewards = rollouts['reward'] + shift_reward * self.reward_shift_val
+        rewards = rollouts['reward'][0] + shift_reward * self.reward_shift_val
 
         return key, states, actions, rewards
 

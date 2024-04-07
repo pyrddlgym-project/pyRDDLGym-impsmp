@@ -5,7 +5,7 @@
   "seed": 3264,
   "state_dim": 2,
   "action_dim": 2,
-  "n_iters": 150,
+  "n_iters": 20,
   "models": {
     "type": "sum_of_half_spaces",
     "params": {
