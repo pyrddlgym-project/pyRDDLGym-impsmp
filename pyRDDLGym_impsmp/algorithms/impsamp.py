@@ -14,24 +14,54 @@ weighting_map = jax.vmap(
     scalar_mult, in_axes=0, out_axes=0)
 
 
-@functools.partial(jax.jit, static_argnames=('policy', 'model', 'adv_estimator'))
-def unnormalized_instr_density(key, theta, policy, model, adv_estimator, adv_estimator_state, states, actions):
-    """Computes the value of the (unnormalized) instrumental probability density
-    at the provided batch of states and actions
-    """
-    dpi = policy.diagonal_of_jacobian(key, theta, states, actions)
-    key, Q_values, _ = adv_estimator.estimate(key, states, actions, None, adv_estimator_state)
-    density = jnp.abs(dpi * Q_values[..., 0])
-    return density
+@functools.partial(jax.jit, static_argnames=('policy', 'model'))
+def unnormalized_instr_density_vector(key, policy, model, theta, init_states, actions):
+    """The instrumental density for parameter i is defined as
 
-@functools.partial(jax.jit, static_argnames=('policy', 'model', 'adv_estimator'))
-def unnormalized_log_instr_density(key, theta, policy, model, adv_estimator, adv_estimator_state, states, actions):
-    density = unnormalized_instr_density(key, theta, policy, model, adv_estimator, adv_estimator_state, states, actions)
-    return jnp.log(density)
+            rho_i = | \tilde{R(tau)} * (\partial \pi / \partial \theta_i) (tau_i, theta) |
+
+    Please note that each parameter i has its own sample trajectory (tau_i).
+
+    Args:
+        key: jax.random.PRNGKey
+            The random generator state key
+        policy:
+            Class carrying static policy parameters
+        model:
+            Interface to the RDDL environment model
+        theta: Dict
+            Policy parameters (Dynamic, therefore passed separately from the policy class)
+            The policy number of parameters is denoted by n_params
+        init_states: jnp.array shape=(n_params, state_dim)
+        actions: jnp.array shape=(n_params, horizon, action_dim)
+            For each parameter, the initial state and a trajectory of actions
+
+    Returns:
+        jnp.array shape=(n_params,)
+            (rho_0(tau_0), rho_1(tau_1), ..., rho_N(tau_N))
+        where N=n_params
+    """
+    key, *subkeys = jax.random.split(key, num=policy.n_params+1)
+    subkeys = jnp.asarray(subkeys)
+    _, states, actions, rewards = jax.vmap(
+        model.evaluate_action_trajectory, (0, 0, 0), (0, 0, 0, 0))(subkeys, init_states, actions)
+
+    dpi = policy.diagonal_of_jacobian_traj(key, theta, states, actions)
+    adv = jnp.sum(rewards, axis=1) #advantage estimate
+    density_vector = jnp.abs(adv * dpi)
+    return density_vector
+
+@functools.partial(jax.jit, static_argnames=('policy', 'model'))
+def unnormalized_log_instr_density_vector(key, policy, model, theta, init_state, actions):
+    """Please see the unnormalized_instr_density_vector docstring."""
+    density_vector = unnormalized_instr_density_vector(key, policy, model, theta, init_state, actions)
+    return jnp.log(density_vector)
 
 
 @functools.partial(jax.jit, static_argnames=('n_shards', 'epsilon', 'policy', 'model'))
-def compute_impsamp_dJ_hat_estimate(key, theta, s, a, cmlt_r, sampling_model_Q_vals, n_shards, epsilon, policy, model):
+def compute_impsamp_dJ_hat_estimate(
+    key, theta, s, a, cmlt_r, sampling_model_Q_vals, Z_estimates,
+    n_shards, epsilon, policy, model):
     """**** TODO: Update the docstring ****
 
         Computes an estimate of dJ^pi over a sample of rolled out trajectories
@@ -74,7 +104,7 @@ def compute_impsamp_dJ_hat_estimate(key, theta, s, a, cmlt_r, sampling_model_Q_v
     Q_estimate_ratio = cmlt_r / (sampling_model_Q_vals + epsilon)
     dpi_sgn = dpi / (jnp.abs(dpi) + epsilon)
 
-    flat_dJ_hat = Q_estimate_ratio * dpi_sgn
+    flat_dJ_hat = Q_estimate_ratio * dpi_sgn / (Z_estimates + epsilon)
 
     # Take averages over B (Sample batch axis) and C (Sampler chain axis),
     # leaving P (Policy parameter axis)
@@ -90,7 +120,7 @@ def compute_impsamp_dJ_hat_estimate(key, theta, s, a, cmlt_r, sampling_model_Q_v
 @functools.partial(jax.jit, static_argnames=('eval_n_shards', 'eval_batch_size', 'policy', 'model'))
 def evaluate_policy(key, it, algo_stats, eval_n_shards, eval_batch_size, theta, policy, model):
     key, init_states = model.batch_generate_initial_state(key, (model.n_rollouts, model.state_dim))
-    key, states, actions, rewards = model.rollout(key, init_states, theta)
+    key, states, actions, rewards = model.rollout_parametrized_policy(key, init_states, theta)
     rewards = jnp.sum(rewards, axis=1) # sum rewards along the time axis
     key, subkey = jax.random.split(key)
     policy_mean, policy_cov = policy.apply(subkey, theta, states)
@@ -149,15 +179,15 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
 
     # Shorthands for commonly-used parameters
     # B = Sample batch
-    # P = Number of policy parameters
     # C = Number of sampler chains
+    # P = Number of policy parameters
     B = config['batch_size']
-    P = policy.n_params
     C = config['n_parallel_sampler_chains']
-    n_samples = B * P * C
+    P = policy.n_params
+    n_samples = B * C * P
 
+    state_dim = policy.state_dim
     action_dim = policy.action_dim
-    n_parallel_sampler_chains = config['n_parallel_sampler_chains']
     eval_batch_size = config['eval_batch_size']
 
     sampling_model = models['sampling_model']
@@ -175,6 +205,8 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
     assert eval_n_shards > 0, (
         '[impsamp] Please check that eval_batch_size > eval_model.n_rollouts.'
         f' eval_batch_size={eval_batch_size}, eval_model.n_rollouts={eval_model.n_rollouts}')
+
+    Z_estimator_config = config['Z_estimator_config']
 
     epsilon = config.get('epsilon', 1e-12)
     save_dJ = config.get('save_dJ', False)
@@ -213,19 +245,7 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
         bijector
     ]
 
-    # functions that compute a model step over B (Sample batch axis),
-    # P (Policy parameter axis) and C (Sampler chain index axis)
-    train_model_step_parallel_B = jax.vmap(train_model.step, (None, 0, 0, None, None), (0, 0))
-    train_model_step_parallel_BP = jax.vmap(train_model_step_parallel_B, (None, 0, 0, None, None), (0, 0))
-    train_model_step_parallel_BPC = jax.vmap(train_model_step_parallel_BP, (None, 0, 0, None, None), (0, 0))
-    train_model_step_parallel_BPC = jax.jit(train_model_step_parallel_BPC)
-
-    sampling_model_step_parallel_B = jax.vmap(sampling_model.step, (None, 0, 0, None, None), (0, 0))
-    sampling_model_step_parallel_BP = jax.vmap(sampling_model_step_parallel_B, (None, 0, 0, None, None), (0, 0))
-    sampling_model_step_parallel_BPC = jax.vmap(sampling_model_step_parallel_BP, (None, 0, 0, None, None), (0, 0))
-    sampling_model_step_parallel_BPC = jax.jit(sampling_model_step_parallel_BPC)
-
-    state_shape = (train_model.n_rollouts, policy.n_params, n_parallel_sampler_chains, train_model.state_dim)
+    init_state_shape = (B, C, P, state_dim)
 
     # run REINFORCE with Importance Sampling
     for it in range(n_iters):
@@ -233,33 +253,60 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
 
         key, algo_stats = evaluate_policy(key, it, algo_stats, eval_n_shards, eval_batch_size, policy.theta, policy, eval_model)
 
-        states_traj = []
-        actions_traj = []
-        rewards_traj = []
-        sampling_model_rewards_traj = []
-
         # generate the initial states
-        key, states = train_model.batch_generate_initial_state(key, state_shape)
-        states_traj.append(states)
+        key, init_states = train_model.batch_generate_initial_state(key, init_state_shape)
 
+        # sample action trajectories from the instrumental density
+        key, subkey = jax.random.split(key)
+        unnorm_log_density_vector = functools.partial(
+            unnormalized_log_instr_density_vector,
+            subkey,
+            policy,
+            sampling_model,
+            policy.theta)
+
+        key = sampler.generate_step_size(key)
+        key = sampler.prep(key,
+                           it,
+                           target_log_prob_fn=unnorm_log_density_vector,
+                           unconstraining_bijector=unconstraining_bijector)
+        key = sampler.generate_initial_state(key, it, init_states)
+        try:
+            key, actions, accepted_matrix = sampler.sample(key, policy.theta, init_states)
+        except FloatingPointError as e:
+            warnings.warn(f'[impsamp] Iteration {it}. Caught FloatingPointError exception during sampling')
+            raise e
+
+
+
+        
+
+        exit()
+
+
+        # -------------- old code below -----------------
         # sample rollouts one step at a time using instrumental densities
         for t in range(horizon):
             key, subkey = jax.random.split(key)
 
-            unnorm_log_density = functools.partial(
-                unnormalized_log_instr_density,
+            unnorm_log_density_vector = functools.partial(
+                unnormalized_log_instr_density_vector,
                 subkey,
-                policy.theta,
                 policy,
                 sampling_model,
-                adv_estimator,
-                adv_estimator_state)
+                policy.theta)
+
+
+            init_states = states
+            key, states, actions, rewards = train_model.rollout_parametrized_policy(key, states[:, 0, 0, :], policy.theta)
+            print(unnorm_log_densities(init_states[0, :, 0, :], actions[:12]))
+            exit()
 
             # sample actions from instrumental density
             key = sampler.generate_step_size(key)
             key = sampler.prep(key,
                                it,
-                               target_log_prob_fn=unnorm_log_density,
+                               target_log_prob_fn=unnorm_log_densities,
                                unconstraining_bijector=unconstraining_bijector)
             key = sampler.generate_initial_state(key, it, states)
             try:
@@ -277,6 +324,30 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
             rewards_traj.append(rewards)
             sampling_model_rewards_traj.append(sampling_rewards)
 
+        # estimate the partition functions
+        key, subkey = jax.random.split(key)
+        Z_a_sample = policy.sample_batch(subkey, policy.theta, states_traj[0], (Z_estimator_config['n_samples'], B, P, C))
+        unnorm_densities = functools.partial(
+            unnormalized_instr_densities,
+            subkey,
+            policy.theta,
+            policy,
+            sampling_model,
+            adv_estimator,
+            adv_estimator_state)
+
+        Z_states = jnp.stack([states_traj[0]] * Z_estimator_config['n_samples'])
+
+        # S denotes the sample axis
+        unnorm_density_parallel_S = jax.vmap(unnorm_densities, (0, 0), 0)
+        unnorm_density_parallel_SB = jax.vmap(unnorm_density_parallel_S, (1, 1), 1)
+        unnorm_density_parallel_SBC = jax.vmap(unnorm_density_parallel_SB, (3, 3), 3)
+
+        Z_pi_sample = policy.pdf(subkey, policy.theta, Z_states, Z_a_sample)
+        Z_rho_sample = unnorm_density_parallel_SBC(Z_states, Z_a_sample)
+
+        Z_importance_weights = Z_rho_sample / Z_pi_sample
+        Z_estimates = jnp.mean(Z_importance_weights, axis=0)
 
         # compute the training model dJ estimate using initial actions and rewards from the generated trajectories
         s = states_traj[0]
@@ -287,7 +358,7 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
             key, s, a, None, adv_estimator_state)
 
         key, dJ_hat, batch_stats = compute_impsamp_dJ_hat_estimate(
-            key, policy.theta, s, a, cmlt_rewards, sampling_model_Q_vals,
+            key, policy.theta, s, a, cmlt_rewards, sampling_model_Q_vals, Z_estimates,
             n_shards, epsilon, policy, train_model)
 
         # update the policy

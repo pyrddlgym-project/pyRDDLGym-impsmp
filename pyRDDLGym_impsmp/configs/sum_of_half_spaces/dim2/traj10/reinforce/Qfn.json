@@ -1,11 +1,11 @@
 { "useGPU": false,
   "use64bit": true,
   "debug_nans": true,
-  "enable_jit": false,
+  "enable_jit": true,
   "seed": 3264,
   "state_dim": 2,
   "action_dim": 2,
-  "n_iters": 100,
+  "n_iters": 150,
   "models": {
     "type": "sum_of_half_spaces",
     "params": {
@@ -23,7 +23,7 @@
             }
           },
           "compiler_kwargs": {
-            "n_rollouts": 32
+            "n_rollouts": 128
           }
         },
         "eval_model": {
@@ -51,17 +51,17 @@
         "cov_lower_cap": 0.00
     }
   },
-  "training_adv_estimator": {
+  "adv_estimator": {
     "type": "Q_function",
     "params": {
       "gamma": 0.9,
       "num_hidden_nodes_Q": [32, 32],
-      "target_update_freq": 250,
+      "target_update_freq": 150,
       "grad_clip_val": 1.0,
       "optimizer": {
         "type": "adam",
         "params": {
-          "learning_rate": 3e-2
+          "learning_rate": 1e-2
         }
       }
     }
@@ -69,13 +69,13 @@
   "optimizer": {
     "type": "adabelief",
     "params": {
-      "learning_rate": 0.05
+      "learning_rate": 0.03
     }
   },
   "algorithm": {
     "type": "reinforce",
     "params": {
-      "batch_size": 32,
+      "batch_size": 128,
       "eval_batch_size": 32,
       "epsilon": 1e-12,
       "verbose": true

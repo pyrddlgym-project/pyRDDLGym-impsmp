@@ -51,7 +51,7 @@
         "cov_lower_cap": 0.00
     }
   },
-  "training_adv_estimator": {
+  "adv_estimator": {
     "type": "future_traj_reward",
     "params": {
       "gamma": 0.9

@@ -108,7 +108,9 @@ def main(config):
         sampler = sampler_cls(
             n_iters=n_iters,
             batch_size=batch_size,
+            state_dim=state_dim,
             action_dim=action_dim,
+            model=models['sampling_model'],
             policy=policy,
             config=sampler_params)
     else:
@@ -146,7 +148,7 @@ def main(config):
     save_to = config.get('save_to')
     if save_to is not None:
         timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        filename = f'{timestamp}_{algorithm_config["id"]}_{model_config["id"]}_a{action_dim}_iters{n_iters}'
+        filename = f'{timestamp}_{algorithm_config["type"]}_{model_config["type"]}_a{action_dim}_iters{n_iters}'
 
         path = os.path.join(save_to, f'{filename}.json')
         # possible race-condition on file write

@@ -2,6 +2,7 @@
 import jax.numpy as jnp
 import jax.random
 import os
+import copy
 
 import pyRDDLGym
 
@@ -36,6 +37,62 @@ def generate_initial_states(key, config, batch_shape):
 
 
 class SumOfHalfSpacesModel:
+    """A wrapper around the RDDL Sum-of-Half-Spaces environment.
+
+    In the Sum-of-Half-Spaces environment, the reward function is given by the
+    expression
+
+            R(x) = sum_{i=1}^N sgn( sum_{d=1}^|S| W_{id} * (x_d - B_{id} )
+
+    where N is the number of summands parameter, W_{id}, B_{id} are fixed constants
+    that define the problem, and x = (x_1, ..., x_|S|) is the state vector.
+    Please refer to the domain.rddl file for the domain definition in the RDDL
+    language.
+
+    The actions in the environment are translations of the state vector.
+
+    The purpose of the SumOfHalfSpaces wrapper is to provide methods for JIT compiling
+    batched RDDL rollouts. The rollouts can use either the relaxed RDDL model or the
+    non-relaxed model. The rollouts can sample actions from a given policy with respect
+    to the current parameters theta, or the rollouts can use a predetermined sequence
+    of actions.
+
+    The RDDL instance files for the SumOfHalfSpaces environment are pre-generated.
+    They are indexed by the dimension of the ambient space (action_dim), the number
+    of summands in the objective function (n_summands), and the instance index (instance_idx).
+    (Several instances are generated for each (action_dim, n_summands) pair in
+    order to make statistically meaningful comparisons.)
+
+    For example, when action_dim=81, n_summands=10, instance_idx=3, the relevant
+    RDDL instance file is stored in the directory
+        models/sum_of_half_spaces/instances/dim81_sum10/instance3.rddl
+
+    Note: As required, new instances may be generated using the script
+        models/sum_of_half_spaces/instances/generator.py
+
+    Constructor parameters:
+        key: jax.random.PRNGKey
+            Key for the current random generator state
+        action_dim: Int
+            Dimension of the state and action space
+        n_summands: Int
+            Number of summands in the reward function definition
+        instance_idx: Int
+            Index of the RDDL instance.
+            There are several instances for each (action_dim, n_summands) pair
+        is_relaxed: Bool
+            Whether or not to apply RDDL relaxations
+        initial_state_config: Dict
+            Parameters that define the initial state distribution. Please
+            also see the generate_initial_states function above.
+        reward_shift: Float
+            Fixed value to add to all (immediate) reward calculations.
+            Can be 0.0
+        compiler_kwargs: Dict
+            Keyword arguments for the JIT compiler. For example, this
+            can specify the batch dimension, or properties of the RDDL
+            relaxation.
+    """
     def __init__(self,
                  key,
                  action_dim,
@@ -45,23 +102,6 @@ class SumOfHalfSpacesModel:
                  initial_state_config,
                  reward_shift,
                  compiler_kwargs):
-        """A wrapper around the RDDL Sum-of-Half-Spaces environment. The purpose
-        of the wrapper is to provide methods for compiling batched RDDL rollouts
-        (in either the relaxed model or the non-relaxed model), and a method for
-        fetching the rollout loss.
-
-        The RDDL instance files are pre-generated. They are indexed by the dimension
-        of the ambient space (action_dim), the number of summands in the objective
-        function (n_summands), and the instance index (instance_idx) (several
-        instances are generated for each (action_dim, n_summands) pair).
-
-        For example, when action_dim=81, n_summands=10, instance_idx=3, the relevant
-        RDDL instance file is stored in the directory
-            models/sum_of_half_spaces/instances/dim81_sum10/instance3.rddl
-
-        If necessary, new instances may be generated using the script
-            models/sum_of_half_spaces/instances/generator.py
-        """
         # check that the requested directory and file exist
         domain_def_file_path = os.path.join(this_dir, 'domain.rddl')
         instance_dir_path = os.path.join(this_dir, 'instances', f'dim{action_dim}_sum{n_summands}')
@@ -106,7 +146,7 @@ class SumOfHalfSpacesModel:
     def compile(self, compiler_kwargs):
         """Compiles batched rollouts in the non-relaxed RDDL model.
         The batch size is given by n_rollouts. Each rollout takes
-        horizon many steps.
+        'horizon' many steps.
         """
         n_rollouts = compiler_kwargs['n_rollouts']
         policy_sample_fn = compiler_kwargs['policy_sample_fn']
@@ -121,19 +161,29 @@ class SumOfHalfSpacesModel:
         init_state_subs = self.rddl_env.sampler.subs
         rollout_horizon = self.rddl_env.horizon
 
-        def policy(key, policy_params, hyperparams, step, states):
+        # JIT - compiling various utility methods
+        self.compiler.compile()
+
+        # compiling a method for sampling a single environment
+        # step given the action
+        self.step_sampler = self.compiler.compile_transition()
+        self.step_subs = copy.deepcopy(init_state_subs)
+
+        # compiling rollouts of the parametrized policy
+        # (that is, the actions are sampled using the policy; the policy
+        # parameters are passed to the compiled rollouts generator at
+        # run-time). the rollouts are generated in parallel in a batch
+        def parametrized_stochastic_policy(key, policy_params, hyperparams, step, states):
             states = states['s']
             return {'a': policy_sample_fn(key, policy_params['theta'], states)}
 
-        self.compiler.compile()
-        self.step_sampler = self.compiler.compile_transition()
-        self.rollout_sampler = self.compiler.compile_rollouts(
-            policy=policy,
+        self.parametrized_policy_rollout_sampler = self.compiler.compile_rollouts(
+            policy=parametrized_stochastic_policy,
             n_steps=rollout_horizon,
             n_batch=n_rollouts)
 
-        # rollouts are batched in parallel. it is useful to repeat subs over the batch
-        # and store here
+        # repeat subs several times (for when batched rollouts
+        # are generated)
         subs = {}
         for (name, value) in init_state_subs.items():
             value = jnp.array(value)[jnp.newaxis, ...]
@@ -143,13 +193,29 @@ class SumOfHalfSpacesModel:
             subs[next_state] = subs[state]
         self.subs = subs
 
-        # single-step transitions are compiled unbatched
-        # therefore, there is no need to repeat subs over the batch
-        self.step_subs = init_state_subs
+        # compiling rollouts that are used to evaluate a sequence of actions.
+        # the actions a0, a1, ..., aT are passed in the hyperparams dictionary.
+        # the policy simply takes action a_t at step t
+        def deterministic_action_traj_policy(key, policy_params, hyperparams, step, states):
+            return {'a': policy_params['a'][step]}
+
+        self.action_traj_evaluator = self.compiler.compile_rollouts(
+            policy=deterministic_action_traj_policy,
+            n_steps=rollout_horizon,
+            n_batch=1)
+
+        # add dummy lead-axis
+        subs = {}
+        for (name, value) in init_state_subs.items():
+            value = jnp.array(value)[jnp.newaxis, ...]
+            subs[name] = value
+        for (state, next_state) in self.model.next_state.items():
+            subs[next_state] = subs[state]
+        self.action_traj_eval_subs = subs
 
     def compile_relaxed(self, compiler_kwargs):
         """Compiles batched rollouts in the relaxed RDDL model.
-        The batch size is given by n_rollouts
+        The batch size is given by n_rollouts.
         """
         n_rollouts = compiler_kwargs['n_rollouts']
         weight = compiler_kwargs.get('weight', 15)
@@ -167,13 +233,31 @@ class SumOfHalfSpacesModel:
         init_state_subs = self.rddl_env.sampler.subs
         rollout_horizon = self.rddl_env.horizon
 
-        def policy(key, policy_params, hyperparams, step, states):
+        # JIT - compiling various utility methods
+        self.compiler.compile()
+
+        # compiling a method for sampling a single environment
+        # step given the action
+        self.step_sampler = self.compiler.compile_transition()
+        # cast subs as real
+        step_subs = {}
+        for (name, value) in init_state_subs.items():
+            value = value.astype(self.compiler.REAL)
+            step_subs[name] = value
+        for (state, next_state) in self.model.next_state.items():
+            step_subs[next_state] = step_subs[state]
+        self.step_subs = step_subs
+
+        # compiling rollouts of the parametrized policy
+        # (that is, the actions are sampled using the policy; the policy
+        # parameters are passed to the compiled rollouts generator at
+        # run-time). the rollouts are generated in parallel in a batch
+        def parametrized_stochastic_policy(key, policy_params, hyperparams, step, states):
+            states = states['s']
             return {'a': policy_sample_fn(key, policy_params['theta'], states)}
 
-        self.compiler.compile()
-        self.step_sampler = self.compiler.compile_transition()
-        self.rollout_sampler = self.compiler.compile_rollouts(
-            policy=policy,
+        self.parametrized_policy_rollout_sampler = self.compiler.compile_rollouts(
+            policy=parametrized_stochastic_policy,
             n_steps=rollout_horizon,
             n_batch=n_rollouts)
 
@@ -188,16 +272,28 @@ class SumOfHalfSpacesModel:
             subs[next_state] = subs[state]
         self.subs = subs
 
-        # single-step transitions are compiled unbatched
-        # therefore, there is no need to repeat subs over the batch
-        # nevertheless, cast as real
-        step_subs = {}
+
+        # compiling rollouts that are used to evaluate a sequence of actions.
+        # the actions a0, a1, ..., aT are passed in the hyperparams dictionary.
+        # the policy simply takes action a_t at step t
+        def deterministic_action_traj_policy(key, policy_params, hyperparams, step, states):
+            return {'a': policy_params['a'][step]}
+
+        self.action_traj_evaluator = self.compiler.compile_rollouts(
+            policy=deterministic_action_traj_policy,
+            n_steps=rollout_horizon,
+            n_batch=1)
+
+        # cast as real numbers and add dummy lead-axis
+        subs = {}
         for (name, value) in init_state_subs.items():
             value = value.astype(self.compiler.REAL)
-            step_subs[name] = value
+            value = jnp.array(value)[jnp.newaxis, ...]
+            subs[name] = value
         for (state, next_state) in self.model.next_state.items():
-            step_subs[next_state] = step_subs[state]
-        self.step_subs = step_subs
+            subs[next_state] = subs[state]
+        self.action_traj_eval_subs = subs
+
 
 
     def batch_generate_initial_state(self, key, batch_shape):
@@ -220,13 +316,13 @@ class SumOfHalfSpacesModel:
 
         return next_states, rewards
 
-    def rollout(self, key, init_states, theta, shift_reward=False):
-        """Rolls out the policy with parameters theta over a batch
+    def rollout_parametrized_policy(self, key, init_states, theta, shift_reward=False):
+        """Rolls out the policy with parameters theta over a batch.
 
         Args:
             key: jax.random.PRNGKey
                 Random key
-            init_states: jnp.array
+            init_states: jnp.array shape=(n_rollouts, state_dim)
                 Array of initial states
             theta: pyTree
                 Current policy parameters
@@ -235,19 +331,17 @@ class SumOfHalfSpacesModel:
                 rollout rewards
 
         Returns:
-            states: jnp.array
-                Array of states. Shape (n_rollouts, T, state_dim)
-            actions: jnp.array
-                Array of actions. Shape (n_rollouts, T, action_dim)
-            rewards: jnp.array
-                Array of rewards. Shape (n_rollouts, T)
-
-            (T denotes the environment horizon)
+            key: jax.random.PRNGKey
+                Mutated key
+            states: jnp.array shape=(n_rollouts, horizon, state_dim)
+            actions: jnp.array shape=(n_rollouts, horizon, action_dim)
+            rewards: jnp.array shape=(n_rollouts, horizon)
+                Batch of trajectories
         """
         self.subs['s'] = init_states
 
         key, subkey = jax.random.split(key)
-        rollouts = self.rollout_sampler(
+        rollouts = self.parametrized_policy_rollout_sampler(
             subkey,
             policy_params={'theta': theta},
             hyperparams=None,
@@ -262,5 +356,49 @@ class SumOfHalfSpacesModel:
         actions = rollouts['action']['a']
         # shift rewards if required
         rewards = rollouts['reward'] + shift_reward * self.reward_shift_val
+
+        return key, states, actions, rewards
+
+
+    def evaluate_action_trajectory(self, key, init_state, actions, shift_reward=False):
+        """Evaluates an action trajectory. The input actions should have shape
+
+                             (horizon, action_dim)
+
+        Please note that a single trajectory is evaluated, not a batch of trajectories.
+
+        Args:
+            key: jax.random.PRNGKey
+                The random generator state key
+            init_state: jnp.array shape=(state_dim,)
+                The initial state for the trajectory
+            actions: jnp.array shape=(horizon, action_dim)
+                The action trajectory to follow
+            shift_reward: Bool, optional
+                Whether or not to add the reward shift value to all
+                immediate rewards
+
+        Returns:
+            key: jax.random.PRNGKey
+                The mutated key
+            states: jnp.array shape=(horizon, state_dim)
+            actions: jnp.array shape=(horizon, action_dim)
+            rewards: jnp.array shape=(horizon,)
+                Along the trajectory
+        """
+        self.action_traj_eval_subs['s'] = init_state[jnp.newaxis, :]
+        key, subkey = jax.random.split(key)
+        rollouts = self.action_traj_evaluator(
+            subkey,
+            policy_params={'a': actions},
+            hyperparams=None,
+            subs=self.action_traj_eval_subs,
+            model_params=self.compiler.model_params)
+
+        # add the initial state and remove the final state
+        # from the trajectory of states generated during the rollout
+        states = jnp.concatenate((init_state[jnp.newaxis, :], rollouts['pvar']['s'][0, :-1]), axis=0)
+        # shift rewards if required
+        rewards = rollouts['reward'][0] + shift_reward * self.reward_shift_val
 
         return key, states, actions, rewards
