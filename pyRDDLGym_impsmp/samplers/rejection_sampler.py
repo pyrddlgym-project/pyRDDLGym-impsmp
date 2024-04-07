@@ -144,10 +144,9 @@ class FixedNumAcceptedRejectionSampler(BaseRejectionSampler):
         key, M, theta, init_states, samples, n, is_sampled = val
         key, *subkeys = jax.random.split(key, num=4)
 
+        P, S = init_states.shape
         if self.proposal_pdf_type == 'rollout_cur_policy':
-            P, S = init_states.shape
-            parallel_rollout_keys = jax.random.split(subkeys[0], num=P)
-            parallel_rollout_keys = jnp.asarray(parallel_rollout_keys)
+            parallel_rollout_keys = jnp.asarray(jax.random.split(subkeys[0], num=P))
             generate_parallel_traj = jax.vmap(self.model.rollout_parametrized_policy, (0, 0, None), (0, 0, 0, 0))
             _, states, actions, _ = generate_parallel_traj(parallel_rollout_keys, init_states[:, jnp.newaxis, :], theta)
             states = states[:, 0, :, :]
@@ -156,7 +155,9 @@ class FixedNumAcceptedRejectionSampler(BaseRejectionSampler):
 
         elif self.proposal_pdf_type == 'sample_uniform':
             minval, maxval = -8.0, 8.0
-            proposed_action = jax.random.uniform(subkeys[1], shape=(P, T, A), minval=minval, maxval=maxval)
+            T = self.model.horizon
+            A = self.action_dim
+            proposed_actions = jax.random.uniform(subkeys[1], shape=(P, T, A), minval=minval, maxval=maxval)
             proposal_density_vals = (1/(maxval - minval))**A * jnp.ones(shape=(P,))
 
         instrumental_density_vals = jnp.exp(self.target_log_prob_fn(init_states, proposed_actions))
