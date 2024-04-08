@@ -62,45 +62,18 @@ def unnormalized_log_instr_density_vector(key, policy, model, theta, init_state,
     return jnp.log(density_vector)
 
 
-@functools.partial(jax.jit, static_argnames=('epsilon', 'policy', 'light_model', 'train_model'))
-def compute_impsamp_dJ_hat_estimate(key, epsilon, policy, light_model, train_model, theta, init_states, actions):
+@functools.partial(jax.jit, static_argnames=('epsilon', 'policy', 'light_model', 'train_model', 'Z_est_sample_size'))
+def compute_impsamp_dJ_hat_estimate(
+    key, epsilon, policy, light_model, train_model, Z_est_sample_size,
+    theta, init_states, actions):
     """***** TODO:
       Update the docstring
-      Add Z-estimate
       Add splitting by sign
      *******
-    Computes an estimate of dJ^pi over a sample of rolled out trajectories
-
-        B = {tau_0, tau_1, ..., tau_{|B|-1}}
-
-    using the REINFORCE formula
-
-        dJ hat = 1/|B| * sum_{tau in B} [ R(tau) * grad log pi(tau) ]
-
-    where
-        dJ denotes the gradient of J^pi with respect to theta,
-        R(tau) = sum_{t=1}^T R(s_t, a_t)
-        grad log pi(tau) = sum_{t=1}^T grad log pi(s_t, a_t)
-
-    Args:
-        key: JAX random key
-        theta: Current policy pi parameters
-        epsilon: Small numerical stability constant
-        policy: Object carrying static policy parameters
-                (the values of the parameters are passed separately
-                 in theta)
-        model: Training RDDL model
-
-    Returns:
-        key: Mutated JAX random key
-        dJ_hat: dJ estimator
-        batch_stats: Dictionary of statistics for the current sample
-            'dJ': Individual summands of the dJ estimator
-            'actions': Sampled actions
     """
     B, P, T, A = actions.shape
 
-    def _compute_dJ_summands(key, x):
+    def _compute_unnorm_dJ_term(key, x):
         init_states, actions = x
         key, *subkeys = jax.random.split(key, num=(2 * P) + 1)
         light_subkeys, train_subkeys = jnp.asarray(subkeys[:P]), jnp.asarray(subkeys[P:])
@@ -115,14 +88,39 @@ def compute_impsamp_dJ_hat_estimate(key, epsilon, policy, light_model, train_mod
         train_adv_est = jnp.sum(train_r, axis=1)
         train_dpi = policy.diagonal_of_jacobian_traj(key, theta, train_s, train_a)
 
-        dJ_summand = train_adv_est * train_dpi / (jnp.abs(light_adv_est * light_dpi) + epsilon)
-        return key, dJ_summand
+        dJ_term = train_adv_est * train_dpi / (jnp.abs(light_adv_est * light_dpi) + epsilon)
+        return key, dJ_term
 
-    key, dJ_summands = jax.lax.scan(_compute_dJ_summands, init=key, xs=(init_states, actions))
-    flat_dJ_hat = jnp.mean(dJ_summands, axis=0)
+    key, unnorm_dJ_terms = jax.lax.scan(_compute_unnorm_dJ_term, init=key, xs=(init_states, actions))
+    flat_unnorm_dJ_hat = jnp.mean(unnorm_dJ_terms, axis=0)
 
-    # Put back into a dm-haiku tree shape in order to be useful
-    # for updating the parameter vector theta
+    # estimate the partition functions Z_i for each instrumental density
+    Z_init_states = init_states.reshape(B * P, -1)
+    Z_init_states = jnp.repeat(Z_init_states, np.ceil(Z_est_sample_size / (B * P)).astype(np.uint32), axis=0)
+    def _compute_Z_estimate_term(key, x):
+        init_state = x
+
+        key, states, actions, rewards = light_model.rollout_parametrized_policy(key, init_state, policy.theta)
+
+        key, *subkeys = jax.random.split(key, num=3)
+        pi = policy.pdf_traj(subkeys[0], policy.theta, states[jnp.newaxis, ...], actions[jnp.newaxis, ...])
+
+        adv_est = jnp.sum(rewards, axis=0)
+        states_PTS = jnp.stack([states] * P)
+        actions_PTA = jnp.stack([actions] * P)
+        dpi = policy.diagonal_of_jacobian_traj(subkeys[1], policy.theta, states_PTS, actions_PTA)
+        rho_vec = jnp.abs(adv_est * dpi)
+
+        Z_term = rho_vec / pi
+        return key, Z_term
+
+    key, Z_terms = jax.lax.scan(_compute_Z_estimate_term, init=key, xs=Z_init_states)
+    Zs = jnp.mean(Z_terms, axis=0)
+
+    # normalize the dJ hat estimate using the partition functions,
+    # and convert format back into a dm-haiku tree shape in order
+    # to be useful for updating the parameter vector theta
+    flat_dJ_hat = flat_unnorm_dJ_hat / (Zs + epsilon)
     dJ_hat = policy.unflatten_dJ(flat_dJ_hat)
 
     batch_stats = {}
@@ -192,7 +190,7 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
     eval_model = models['eval_model']
 
     # Shorthands for common parameters
-    # B = Sample batch
+    # B = Sample batch size
     # C = Number of sampler chains
     # P = Number of policy parameters
     # T = Horizon
@@ -279,8 +277,10 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
             warnings.warn(f'[impsamp] Iteration {it}. Caught FloatingPointError exception during sampling')
             break
 
+        init_states = init_states[:, 0] # remove the C axis.TODO: Figure out what the right thing to do is
         key, dJ_hat, batch_stats = compute_impsamp_dJ_hat_estimate(
-            key, epsilon, policy, sampling_model, train_model, policy.theta, init_states[:, 0], actions)
+            key, epsilon, policy, sampling_model, train_model, Z_estimator_config['n_samples'],
+            policy.theta, init_states, actions)
 
         # update the policy
         updates, opt_state = optimizer.update(dJ_hat, opt_state)
