@@ -199,14 +199,6 @@ class SumOfHalfSpacesModel:
         self.subs = subs
 
 
-        subs = {}
-        for (name, value) in init_state_subs.items():
-            value = jnp.array(value)[jnp.newaxis, ...]
-            subs[name] = value
-        for (state, next_state) in self.model.next_state.items():
-            subs[next_state] = subs[state]
-        self.action_traj_eval_subs = subs
-
     def compile_relaxed(self, compiler_kwargs):
         """Compiles batched rollouts in the relaxed RDDL model.
         Each rollout takes 'horizon' many steps.
@@ -264,16 +256,6 @@ class SumOfHalfSpacesModel:
             n_steps=rollout_horizon,
             n_batch=1)
 
-        # repeat subs over the batch and cast as real numbers
-        subs = {}
-        for (name, value) in init_state_subs.items():
-            value = value.astype(self.compiler.REAL)
-            value = jnp.array(value)[jnp.newaxis, ...]
-            subs[name] = value
-        for (state, next_state) in self.model.next_state.items():
-            subs[next_state] = subs[state]
-        self.subs = subs
-
         # cast as real numbers and add dummy lead-axis
         subs = {}
         for (name, value) in init_state_subs.items():
@@ -282,7 +264,7 @@ class SumOfHalfSpacesModel:
             subs[name] = value
         for (state, next_state) in self.model.next_state.items():
             subs[next_state] = subs[state]
-        self.action_traj_eval_subs = subs
+        self.subs = subs
 
 
 
@@ -375,13 +357,13 @@ class SumOfHalfSpacesModel:
             rewards: jnp.array shape=(horizon,)
                 Along the trajectory
         """
-        self.action_traj_eval_subs['s'] = init_state[jnp.newaxis, :]
+        self.subs['s'] = init_state[jnp.newaxis, :]
         key, subkey = jax.random.split(key)
         rollouts = self.action_traj_evaluator(
             subkey,
             policy_params={'a': actions},
             hyperparams=None,
-            subs=self.action_traj_eval_subs,
+            subs=self.subs,
             model_params=self.compiler.model_params)
 
         # add the initial state and remove the final state
