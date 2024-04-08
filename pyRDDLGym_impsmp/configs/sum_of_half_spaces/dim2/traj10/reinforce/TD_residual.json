@@ -22,21 +22,18 @@
               "scale": 2.0
             }
           },
-          "compiler_kwargs": {
-            "n_rollouts": 32
-          }
+          "compiler_kwargs": {}
         },
         "eval_model": {
           "is_relaxed": false,
           "initial_state_config": {
-            "type": "constant",
+            "type": "normal",
             "params": {
-              "value": 0.0
+              "mean": 0.0,
+              "scale": 2.0
             }
           },
-          "compiler_kwargs": {
-            "n_rollouts": 32
-          }
+          "compiler_kwargs": {}
         }
       }
     }
@@ -74,11 +71,11 @@
   "algorithm": {
     "type": "reinforce",
     "params": {
-      "batch_size": 32,
+      "batch_size": 128,
       "eval_batch_size": 32,
       "epsilon": 1e-12,
       "verbose": true
     }
   },
-  "save_to": "/home/ilia/Programming/storage/tmp"
+  "save_to": null
 }

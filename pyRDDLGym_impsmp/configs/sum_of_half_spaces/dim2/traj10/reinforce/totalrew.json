@@ -50,8 +50,7 @@
   },
   "adv_estimator": {
     "type": "total_traj_reward",
-    "params": {
-    }
+    "params": {}
   },
   "optimizer": {
     "type": "adabelief",
@@ -68,5 +67,5 @@
       "verbose": true
     }
   },
-  "save_to": "/home/ilia/Programming/storage/tmp"
+  "save_to": null
 }
