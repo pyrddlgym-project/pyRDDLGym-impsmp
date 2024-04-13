@@ -181,8 +181,6 @@ def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
     algo_stats['reward_mean']  = algo_stats['reward_mean'].at[it].set(jnp.mean(rewards))
     algo_stats['reward_std']   = algo_stats['reward_std'].at[it].set(jnp.std(rewards))
     algo_stats['reward_sterr'] = algo_stats['reward_sterr'].at[it].set(algo_stats['reward_std'][it] / jnp.sqrt(eval_batch_size))
-    algo_stats['policy_mean']  = algo_stats['policy_mean'].at[it].set(jnp.mean(policy_mean, axis=(0,1)))
-    algo_stats['policy_cov']   = algo_stats['policy_cov'].at[it].set(jnp.diag(jnp.mean(policy_cov, axis=(0,1))))
     return key, algo_stats
 
 def print_impsamp_report(it, algo_stats, subt0, subt1):
@@ -282,9 +280,6 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
         # update the policy
         updates, opt_state = optimizer.update(dJ_hat, opt_state)
         policy.theta = optax.apply_updates(policy.theta, updates)
-
-        # update statistics and print out report for current iteration
-        key, algo_stats = update_impsamp_stats(key, it, algo_stats, batch_stats, B, save_dJ)
 
         subt1 = timer()
         if verbose:
