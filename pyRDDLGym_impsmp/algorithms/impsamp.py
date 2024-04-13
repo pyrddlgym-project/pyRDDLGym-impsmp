@@ -4,7 +4,11 @@ NOTE: This particular implementation does not split the
 densities into positive and negative parts. It also does
 not do subsampling. This implementation is mostly useful
 as a working simplest version of the algorithm. For good
-results, please see "impsamp_signed_density" or
+results, please see
+
+             "impsamp_signed_density"
+                       or
+             "impsamp_split_by_sign"
 """
 import numpy as np
 import jax
@@ -21,8 +25,8 @@ def unnormalized_instr_density_vector(key, policy, model, theta, init_model_stat
 
         rho_i = | \tilde{R(tau_i)} * (\partial \pi / \partial \theta_i) (tau_i, theta) |
 
-    Where \tilde R denotes the cumulative reward over trajectory tau_i in the
-    light model, and pi denotes the parametrized policy with parameters
+    Where \tilde R denotes the cumulative reward over trajectory tau_i
+    in the light model, and pi denotes the parametrized policy with parameters
     theta. Please note that each parameter theta_i has its own sample trajectory
     (denoted by tau_i).
 
@@ -34,8 +38,10 @@ def unnormalized_instr_density_vector(key, policy, model, theta, init_model_stat
         model:
             Interface to the RDDL environment model
         theta: Dict
-            Policy parameters (Dynamic, therefore passed separately from the policy class;
-            the static and dynamic parameters are split to enable JIT compilation.)
+            Policy parameters
+            (Dynamic, therefore passed separately from the policy class;
+            the static and dynamic parameters are split to enable JIT
+            compilation.)
             The policy number of parameters is denoted by n_params
         init_model_states: jnp.array shape=(n_params, state_dim)
         actions: jnp.array shape=(n_params, horizon, action_dim)
