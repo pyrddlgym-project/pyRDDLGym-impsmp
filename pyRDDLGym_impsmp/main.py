@@ -110,7 +110,6 @@ def main(config):
         sampler = sampler_cls(
             n_iters=n_iters,
             batch_size=batch_size,
-            num_chains=algorithm_params['n_parallel_sampler_chains'],
             state_dim=state_dim,
             action_dim=action_dim,
             model=models['sampling_model'],

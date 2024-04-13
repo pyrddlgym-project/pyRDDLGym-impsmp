@@ -1,4 +1,4 @@
-{ "useGPU": false,
+{ "useGPU": true,
   "use64bit": true,
   "debug_nans": false,
   "enable_jit": true,
@@ -71,13 +71,11 @@
   "algorithm": {
     "type": "impsamp",
     "params": {
-      "batch_size": 32,
-      "n_parallel_sampler_chains": 1,
+      "batch_size": 128,
       "eval_batch_size": 32,
       "sampler": {
         "type": "hmc",
         "params": {
-          "chain_len": 1,
           "step_size_distribution": {
             "type": "constant",
             "params": {

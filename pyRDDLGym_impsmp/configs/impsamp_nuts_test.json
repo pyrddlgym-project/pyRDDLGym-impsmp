@@ -72,12 +72,10 @@
     "type": "impsamp",
     "params": {
       "batch_size": 128,
-      "n_parallel_sampler_chains": 1,
       "eval_batch_size": 32,
       "sampler": {
         "type": "nuts",
         "params": {
-          "chain_len": 1,
           "step_size_distribution": {
             "type": "constant",
             "params": {
@@ -92,14 +90,11 @@
             }
           },
           "reinit_strategy": {
-            "type": "uniform",
-            "params": {
-              "min": -2.0,
-              "max": 2.0
-            }
+            "type": "rollout_cur_policy",
+            "params": {}
           },
           "burnin_per_chain": 128,
-          "max_tree_depth": 10,
+          "max_tree_depth": 8,
           "num_adaptation_steps": null
         }
       },

@@ -198,13 +198,11 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
 
     # Shorthands for common parameters
     # B = Sample batch size
-    # C = Number of sampler chains
     # P = Number of policy parameters
     # T = Horizon
     # A = Action space dimension
     # S = State space dimension
     B = config['batch_size']
-    C = config['n_parallel_sampler_chains']
     P = policy.n_params
     T = train_model.horizon
     A = policy.action_dim
@@ -236,7 +234,7 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
         bijector
     ]
 
-    init_model_state_shape = (B, C, P, S)
+    init_model_state_shape = (B, P, S)
     actions = None
 
     # run REINFORCE with Importance Sampling
@@ -267,8 +265,6 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
 
         try:
             key, (init_model_states, actions), accepted_matrix = sampler.sample(key, policy.theta, init_model_states, sampler_step_size, sampler_init_states)
-            init_model_states = init_model_states[0].reshape(B*C, P, S)
-            actions = actions[0].reshape(B*C, P, T, A)
         except FloatingPointError as e:
             warnings.warn(f'[impsamp] Iteration {it}. Caught FloatingPointError exception during sampling')
             break
