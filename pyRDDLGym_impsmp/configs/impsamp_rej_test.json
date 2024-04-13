@@ -59,7 +59,7 @@
   "policy": {
     "type": "multivar_normal_with_state_dependent_linear_parametrization",
     "params": {
-        "cov_lower_cap": 0.00
+        "cov_lower_cap": 0.05
     }
   },
   "optimizer": {
@@ -93,5 +93,5 @@
       "verbose": true
     }
   },
-  "save_to": "/home/ilia/Programming/storage/tmp"
+  "save_to": null
 }

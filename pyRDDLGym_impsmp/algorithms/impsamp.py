@@ -183,9 +183,10 @@ def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
     algo_stats['reward_sterr'] = algo_stats['reward_sterr'].at[it].set(algo_stats['reward_std'][it] / jnp.sqrt(eval_batch_size))
     return key, algo_stats
 
-def print_impsamp_report(it, algo_stats, subt0, subt1):
+def print_impsamp_report(it, algo_stats, sampler, subt0, subt1):
     """Prints out the results for the current training iteration to console"""
     print(f'Iter {it} :: Importance Sampling :: Runtime={subt1-subt0}s')
+    sampler.print_report(it)
     print(f'Eval. reward={algo_stats["reward_mean"][it]:.3f} \u00B1 {algo_stats["reward_sterr"][it]:.3f}\n')
 
 
