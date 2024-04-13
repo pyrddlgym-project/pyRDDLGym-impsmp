@@ -133,11 +133,6 @@ class FixedNumAcceptedRejectionSampler(BaseRejectionSampler):
                  config):
         super().__init__(n_iters, batch_size, state_dim, action_dim, model, policy, config)
 
-        self.n_distinct_samples_used_buffer = []
-        self.stats = {
-            'n_distinct_samples_used': []
-        }
-
     def cond_fn(self, val):
         _, _, _, _, _, _, is_sampled = val
         res = jnp.logical_not(jnp.all(is_sampled))
@@ -212,19 +207,14 @@ class FixedNumAcceptedRejectionSampler(BaseRejectionSampler):
 
         samples, n_distinct = accept_reject_parallel_over_batch(batch_subkeys, init_model_states, theta, T, A, self.rejection_rate)
 
-        # keep in buffer until statistics for the current iteration are updated
-        self.n_distinct_samples_used_buffer.append(n_distinct[0])
-
         return key, (init_model_states, samples), None
 
     def update_stats(self, it, samples, is_accepted):
-        self.stats['n_distinct_samples_used'].extend(self.n_distinct_samples_used_buffer)
-        self.n_distinct_samples_used_buffer.clear()
+        pass
 
     def print_report(self, it):
         print(f'Rejection Sampler'
-              f' :: Batch size={B}'
+              f' :: Batch size={self.batch_size}'
               f' :: Rej.rate cur.val={self.rejection_rate},'
               f' sched.type={self.rejection_rate_type}'
-              f' :: Proposal pdf={self.config["proposal_pdf_type"]}'
-              f' :: # Distinct samples={self.stats["n_distinct_samples_used"][-1]}')
+              f' :: Proposal pdf={self.config["proposal_pdf_type"]}')

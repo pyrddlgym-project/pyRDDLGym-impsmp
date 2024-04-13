@@ -280,7 +280,7 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
 
         subt1 = timer()
         if verbose:
-            print_impsamp_report(it, algo_stats, subt0, subt1)
+            print_impsamp_report(it, algo_stats, sampler, subt0, subt1)
 
     algo_stats.update({
         'algorithm': 'ImpSamp',

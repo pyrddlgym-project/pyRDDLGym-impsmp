@@ -58,10 +58,12 @@ class HMCSampler:
         assert self.config['init_strategy']['type'] in VALID_INIT_STRATEGY_TYPES
         assert self.config['reinit_strategy']['type'] in VALID_REINIT_STRATEGY_TYPES
 
+        self.acceptance_rate = -1.0
 
     def generate_step_size(self, key):
-        """The HMC step size may follow a schedule or may be drawn from a
-        random distribution to avoid getting stuck in a periodic pattern.
+        """The initial HMC step size may follow a schedule or may be drawn
+        from a random distribution to avoid getting stuck in a periodic pattern.
+        The step-size is then optionally adjusted using tfp.
         """
         key, subkey = jax.random.split(key)
 
@@ -170,16 +172,13 @@ class HMCSampler:
             #TODO: Revert to previous version below once bijector fixed
             #trace_fn=lambda _, pkr: pkr.inner_results.inner_results.is_accepted)
             #@@@@ END
+        self.acceptance_rate = jnp.mean(accepted_matrix)
         return key, (init_model_states[0], sampled_actions[0]), accepted_matrix
 
-    def update_stats(self, it, samples, is_accepted, step_size):
-        self.stats['acceptance_rate'] = self.stats['acceptance_rate'].at[it].set(jnp.mean(is_accepted))
-        self.stats['step_size'] = self.stats['step_size'].at[it].set(step_size)
-
     def print_report(self, it):
-        print(f'HMC :: Batch={self.B} :: Init.distr={self.config["init_distribution"]["type"]}')
-        print(f'       Burnin={self.config["num_burnin_iters_per_chain"]} :: Step size={self.stats["step_size"][it]} :: Num.leapfrog={self.config["num_leapfrog_steps"]}')
-        print(f'       Acceptance rate={self.stats["acceptance_rate"][it]}')
+        print(f'HMC :: Batch={self.B} :: Init.str.={self.config["init_strategy"]["type"]} :: Reinit.str.={self.config["reinit_strategy"]["type"]}')
+        print(f'       Burnin={self.config["burnin_per_chain"]} :: Num.leapfrog={self.config["num_leapfrog_steps"]}')
+        print(f'       Acceptance rate={self.acceptance_rate}')
 
 
 class NoUTurnSampler(HMCSampler):
@@ -189,7 +188,7 @@ class NoUTurnSampler(HMCSampler):
              target_log_prob_fn,
              unconstraining_bijector,
              step_size):
-
+        """Initialize the NUTS sampler for the current iteration."""
         num_burnin_iters_per_chain = self.config['burnin_per_chain']
         num_adaptation_steps = self.config.get('num_adaptation_steps')
         max_tree_depth = self.config['max_tree_depth']
@@ -217,6 +216,6 @@ class NoUTurnSampler(HMCSampler):
         return key
 
     def print_report(self, it):
-        print(f'NUTS :: Batch={self.B} :: Init.distr={self.config["init_distribution"]["type"]}')
-        print(f'        Burnin={self.config["num_burnin_iters_per_chain"]} :: Step size={self.stats["step_size"][it]} :: Max.tree depth={self.config["max_tree_depth"]}')
-        print(f'        Acceptance rate={self.stats["acceptance_rate"][it]}')
+        print(f'NUTS :: Batch={self.B} :: Init.str.={self.config["init_strategy"]["type"]} :: Reinit.str.={self.config["reinit_strategy"]["type"]}')
+        print(f'        Burnin={self.config["burnin_per_chain"]} :: Max.tree depth={self.config["max_tree_depth"]}')
+        print(f'        Acceptance rate={self.acceptance_rate}')
