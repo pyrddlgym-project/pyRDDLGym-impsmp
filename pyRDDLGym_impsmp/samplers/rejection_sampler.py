@@ -187,19 +187,13 @@ class FixedNumAcceptedRejectionSampler(BaseRejectionSampler):
 
     def sample(self, key, theta, init_model_states, sampler_step_size, sampler_init_state):
         # B: Batch size
-        # C: Num parallel chains for sampler (redundant parameter, included for a consistent interface with HMC)
         # P: Number of policy parameters
         # T: Horizon
         # S: State space dimension
         # A: Action space dimension
-        B, C, P, S = init_model_states.shape
+        B, P, S = init_model_states.shape
         T = self.model.horizon
         A = self.action_dim
-
-        # for rejection sampling, there is no distinction between total sample size
-        # and number of parallel sampler chains. Every sample may be sampled in parallel
-        batch_size = B * C
-        init_model_states = init_model_states.reshape(batch_size, P, S)
 
         def _accept_reject(key, init_model_states, theta, T, A, M):
             """Runs Accept/Reject sampling for a single element of the sample batch"""
@@ -212,7 +206,7 @@ class FixedNumAcceptedRejectionSampler(BaseRejectionSampler):
             return samples, n_distinct
 
         # run rejection sampling over the batch
-        key, *batch_subkeys = jax.random.split(key, num=batch_size+1)
+        key, *batch_subkeys = jax.random.split(key, num=B+1)
         batch_subkeys = jnp.asarray(batch_subkeys)
         accept_reject_parallel_over_batch = jax.vmap(_accept_reject, (0, 0, None, None, None, None), (0, 0))
 
@@ -221,7 +215,7 @@ class FixedNumAcceptedRejectionSampler(BaseRejectionSampler):
         # keep in buffer until statistics for the current iteration are updated
         self.n_distinct_samples_used_buffer.append(n_distinct[0])
 
-        return key, samples, None
+        return key, (init_model_states, samples), None
 
     def update_stats(self, it, samples, is_accepted):
         self.stats['n_distinct_samples_used'].extend(self.n_distinct_samples_used_buffer)
