@@ -137,13 +137,13 @@ def print_reinforce_report(it, algo_stats, subt0, subt1):
 
 def reinforce(key, n_iters, config, bijector, policy, sampler, optimizer, models, adv_estimator, adv_estimator_state):
     """Runs the REINFORCE algorithm"""
-    state_dim = model.state_dim
-    action_dim = model.action_dim
-    batch_size = config['batch_size']
-    eval_batch_size = config['eval_batch_size']
-
     train_model = models['train_model']
     eval_model = models['eval_model']
+
+    state_dim = train_model.state_dim
+    action_dim = train_model.action_dim
+    batch_size = config['batch_size']
+    eval_batch_size = config['eval_batch_size']
 
     epsilon = config.get('epsilon', 1e-12)
     save_dJ = config.get('save_dJ', False)

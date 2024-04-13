@@ -28,6 +28,7 @@ class BaseRejectionSampler:
                  model,
                  policy,
                  config):
+
         self.batch_size = batch_size
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -45,25 +46,27 @@ class BaseRejectionSampler:
             self.rejection_rate_params['delta'] = (self.rejection_rate_params['to'] - self.rejection_rate_params['from']) / n_iters
         self.rejection_rate = None
 
+    def generate_step_size(self, key):
+        """Included to have a consistent interface with that of HMC"""
+        return key, None
+
+    def generate_initial_state(self, key, it, init_model_state, samples):
+        """Included to have a consistent interface with that of HMC"""
+        return key, None
+
     def prep(self,
              key,
              it,
              target_log_prob_fn,
-             unconstraining_bijector):
+             unconstraining_bijector,
+             step_size):
+        """Perform initialization steps prior to sampling"""
         self.target_log_prob_fn = target_log_prob_fn
         self.unconstraining_bijector = unconstraining_bijector
         self.rejection_rate = rejection_rate_schedule(it, self.rejection_rate_type, self.rejection_rate_params)
         return key
 
-    def generate_initial_state(self, key, it, samples):
-        """Included to have a consistent interface with that of HMC"""
-        return key
-
-    def generate_step_size(self, key):
-        """Included to have a consistent interface with that of HMC"""
-        return key
-
-    def sample(self, key, theta):
+    def sample(self, key, theta, init_model_states, sampler_step_size, sampler_init_state):
         raise NotImplementedError
 
     def update_stats(self, it, samples, is_accepted):
@@ -141,14 +144,14 @@ class FixedNumAcceptedRejectionSampler(BaseRejectionSampler):
         return res
 
     def body_fn(self, val):
-        key, M, theta, init_states, samples, n, is_sampled = val
+        key, M, theta, init_model_states, samples, n, is_sampled = val
         key, *subkeys = jax.random.split(key, num=4)
 
-        P, S = init_states.shape
+        P, S = init_model_states.shape
         if self.proposal_pdf_type == 'rollout_cur_policy':
             parallel_rollout_keys = jnp.asarray(jax.random.split(subkeys[0], num=P))
             generate_parallel_traj = jax.vmap(self.model.rollout_parametrized_policy, (0, 0, None), (0, 0, 0, 0))
-            _, states, proposed_actions, _ = generate_parallel_traj(parallel_rollout_keys, init_states, theta)
+            _, states, proposed_actions, _ = generate_parallel_traj(parallel_rollout_keys, init_model_states, theta)
             proposal_density_vals = self.policy.pdf_traj(subkeys[1], theta, states, proposed_actions)
 
         elif self.proposal_pdf_type == 'sample_uniform':
@@ -158,7 +161,7 @@ class FixedNumAcceptedRejectionSampler(BaseRejectionSampler):
             proposed_actions = jax.random.uniform(subkeys[1], shape=(P, T, A), minval=minval, maxval=maxval)
             proposal_density_vals = (1/(maxval - minval))**A * jnp.ones(shape=(P,))
 
-        instrumental_density_vals = jnp.exp(self.target_log_prob_fn(init_states, proposed_actions))
+        instrumental_density_vals = jnp.exp(self.target_log_prob_fn(init_model_states, proposed_actions))
 
         # sample independent uniform variables to test the acceptance criterion
         u = jax.random.uniform(subkeys[2], shape=instrumental_density_vals.shape)
@@ -180,40 +183,40 @@ class FixedNumAcceptedRejectionSampler(BaseRejectionSampler):
 
         samples = jnp.where(acceptance_criterion, proposed_actions, samples)
 
-        return (key, M, theta, init_states, samples, n, is_sampled)
+        return (key, M, theta, init_model_states, samples, n, is_sampled)
 
-    def sample(self, key, theta, init_states):
+    def sample(self, key, theta, init_model_states, sampler_step_size, sampler_init_state):
         # B: Batch size
         # C: Num parallel chains for sampler (redundant parameter, included for a consistent interface with HMC)
         # P: Number of policy parameters
         # T: Horizon
         # S: State space dimension
         # A: Action space dimension
-        B, C, P, S = init_states.shape
+        B, C, P, S = init_model_states.shape
         T = self.model.horizon
         A = self.action_dim
 
         # for rejection sampling, there is no distinction between total sample size
         # and number of parallel sampler chains. Every sample may be sampled in parallel
         batch_size = B * C
-        init_states = init_states.reshape(batch_size, P, S)
+        init_model_states = init_model_states.reshape(batch_size, P, S)
 
-        def _accept_reject(key, init_states, theta, T, A, M):
+        def _accept_reject(key, init_model_states, theta, T, A, M):
             """Runs Accept/Reject sampling for a single element of the sample batch"""
-            P, S = init_states.shape
+            P, S = init_model_states.shape
             samples = jnp.empty((P, T, A))
             is_sampled = jnp.zeros(P).astype(bool)
 
-            init_val = (key, M, theta, init_states, samples, 0, is_sampled)
+            init_val = (key, M, theta, init_model_states, samples, 0, is_sampled)
             _, _, _, _, samples, n_distinct, _ = jax.lax.while_loop(self.cond_fn, self.body_fn, init_val)
             return samples, n_distinct
 
-        # run rejection sampling over a batch
-        key, *batch_subkeys = jax.random.split(key, num=self.batch_size+1)
+        # run rejection sampling over the batch
+        key, *batch_subkeys = jax.random.split(key, num=batch_size+1)
         batch_subkeys = jnp.asarray(batch_subkeys)
         accept_reject_parallel_over_batch = jax.vmap(_accept_reject, (0, 0, None, None, None, None), (0, 0))
 
-        samples, n_distinct = accept_reject_parallel_over_batch(batch_subkeys, init_states, theta, T, A, self.rejection_rate)
+        samples, n_distinct = accept_reject_parallel_over_batch(batch_subkeys, init_model_states, theta, T, A, self.rejection_rate)
 
         # keep in buffer until statistics for the current iteration are updated
         self.n_distinct_samples_used_buffer.append(n_distinct[0])
@@ -226,7 +229,7 @@ class FixedNumAcceptedRejectionSampler(BaseRejectionSampler):
 
     def print_report(self, it):
         print(f'Rejection Sampler'
-              f' :: Batch={self.batch_size}'
+              f' :: Batch size={B}'
               f' :: Rej.rate cur.val={self.rejection_rate},'
               f' sched.type={self.rejection_rate_type}'
               f' :: Proposal pdf={self.config["proposal_pdf_type"]}'

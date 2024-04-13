@@ -1,3 +1,11 @@
+"""Implementation of REINFORCE with Importance Sampling.
+
+NOTE: This particular implementation does not split the
+densities into positive and negative parts. It also does
+not do subsampling. This implementation is mostly useful
+as a working simplest version of the algorithm. For good
+results, please see "impsamp_signed_density" or
+"""
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -5,23 +13,16 @@ import optax
 import functools
 from time import perf_counter as timer
 
-def scalar_mult(alpha, v):
-    pad_axes = tuple(range(len(alpha.shape), len(v.shape)))
-    alpha = jnp.expand_dims(alpha, axis=pad_axes)
-    return alpha * v
-
-weighting_map = jax.vmap(
-    scalar_mult, in_axes=0, out_axes=0)
 
 
 @functools.partial(jax.jit, static_argnames=('policy', 'model'))
-def unnormalized_instr_density_vector(key, policy, model, theta, init_states, actions):
+def unnormalized_instr_density_vector(key, policy, model, theta, init_model_states, actions):
     """The instrumental density for parameter i is defined as
 
         rho_i = | \tilde{R(tau_i)} * (\partial \pi / \partial \theta_i) (tau_i, theta) |
 
     Where \tilde R denotes the cumulative reward over trajectory tau_i in the
-    sampling model, and pi denotes the parametrized policy with parameters
+    light model, and pi denotes the parametrized policy with parameters
     theta. Please note that each parameter theta_i has its own sample trajectory
     (denoted by tau_i).
 
@@ -36,7 +37,7 @@ def unnormalized_instr_density_vector(key, policy, model, theta, init_states, ac
             Policy parameters (Dynamic, therefore passed separately from the policy class;
             the static and dynamic parameters are split to enable JIT compilation.)
             The policy number of parameters is denoted by n_params
-        init_states: jnp.array shape=(n_params, state_dim)
+        init_model_states: jnp.array shape=(n_params, state_dim)
         actions: jnp.array shape=(n_params, horizon, action_dim)
             For each parameter, the initial state and a trajectory of actions
 
@@ -47,8 +48,10 @@ def unnormalized_instr_density_vector(key, policy, model, theta, init_states, ac
     """
     key, *subkeys = jax.random.split(key, num=policy.n_params+1)
     subkeys = jnp.asarray(subkeys)
+
+    # evaluate tau_i for parameter i in parallel in i
     _, states, actions, rewards = jax.vmap(
-        model.evaluate_action_trajectory, (0, 0, 0), (0, 0, 0, 0))(subkeys, init_states, actions)
+        model.evaluate_action_trajectory, (0, 0, 0), (0, 0, 0, 0))(subkeys, init_model_states, actions)
 
     dpi = policy.diagonal_of_jacobian_traj(key, theta, states, actions)
     adv = jnp.sum(rewards, axis=1) #advantage estimate
@@ -65,37 +68,67 @@ def unnormalized_log_instr_density_vector(key, policy, model, theta, init_state,
 @functools.partial(jax.jit, static_argnames=('epsilon', 'policy', 'light_model', 'train_model', 'Z_est_sample_size'))
 def compute_impsamp_dJ_hat_estimate(
     key, epsilon, policy, light_model, train_model, Z_est_sample_size,
-    theta, init_states, actions):
-    """***** TODO:
-      Update the docstring
-      Add splitting by sign
-     *******
+    theta, init_model_states, actions):
+    """Given a sample of initial states and actions, computes the Importance Sampling
+    estimate of dJ using the formula
+
+        dJ/dtheta_i ~ 1/|B| \sum_j r(tau_j) / \tilde |r(tau_j)| * sign(dpi/dthetai)
+
+    Args:
+        key: jax.random.PRNGKey
+            The random generator state key
+        epsilon: Float
+            Small number to avoid division by zero
+        policy:
+            Class carrying static policy parameters
+        light_model:
+        train_model:
+            Interfaces to the light and training environment model
+        Z_est_sample_size: Int
+            Number of samples to draw for estimating the partition functions
+        theta: Dict
+            Policy parameters (Dynamic, therefore passed separately from the policy class;
+            the static and dynamic parameters are split to enable JIT compilation.)
+            The policy number of parameters is denoted by n_params
+        init_model_states: jnp.array shape=(batch_size, n_chains, n_params, state_dim)
+        actions: jnp.array shape=(batch_size, n_chains, n_params, horizon, action_dim)
+            For each sample, chain, parameter, the initial state and a trajectory of actions
+
+    Returns:
+        key: jax.random.PRNGKey
+            Mutated random generator state
+        dJ_hat: Dict
+            PyTree of dJ/dtheta_i. Same PyTree structure as theta.
+        batch_stats: Dict
+            Collected statistics
     """
+    # Please see the "impsamp" function below for the meaning
+    # of the parameter shorthands
     B, P, T, A = actions.shape
 
     def _compute_unnorm_dJ_term(key, x):
-        init_states, actions = x
+        init_model_states, actions = x
         key, *subkeys = jax.random.split(key, num=(2 * P) + 1)
         light_subkeys, train_subkeys = jnp.asarray(subkeys[:P]), jnp.asarray(subkeys[P:])
 
         _, light_s, light_a, light_r = jax.vmap(
-            light_model.evaluate_action_trajectory, (0, 0, 0), (0, 0, 0, 0))(light_subkeys, init_states, actions)
+            light_model.evaluate_action_trajectory, (0, 0, 0), (0, 0, 0, 0))(light_subkeys, init_model_states, actions)
         light_adv_est = jnp.sum(light_r, axis=1)
         light_dpi = policy.diagonal_of_jacobian_traj(key, theta, light_s, light_a)
 
         _, train_s, train_a, train_r = jax.vmap(
-            train_model.evaluate_action_trajectory, (0, 0, 0), (0, 0, 0, 0))(train_subkeys, init_states, actions)
+            train_model.evaluate_action_trajectory, (0, 0, 0), (0, 0, 0, 0))(train_subkeys, init_model_states, actions)
         train_adv_est = jnp.sum(train_r, axis=1)
         train_dpi = policy.diagonal_of_jacobian_traj(key, theta, train_s, train_a)
 
         dJ_term = train_adv_est * train_dpi / (jnp.abs(light_adv_est * light_dpi) + epsilon)
         return key, dJ_term
 
-    key, unnorm_dJ_terms = jax.lax.scan(_compute_unnorm_dJ_term, init=key, xs=(init_states, actions))
+    key, unnorm_dJ_terms = jax.lax.scan(_compute_unnorm_dJ_term, init=key, xs=(init_model_states, actions))
     flat_unnorm_dJ_hat = jnp.mean(unnorm_dJ_terms, axis=0)
 
     # estimate the partition functions Z_i for each instrumental density
-    Z_init_states = init_states.reshape(B * P, -1)
+    Z_init_states = init_model_states.reshape(B * P, -1)
     Z_init_states = jnp.repeat(Z_init_states, np.ceil(Z_est_sample_size / (B * P)).astype(np.uint32), axis=0)
     def _compute_Z_estimate_term(key, x):
         init_state = x
@@ -129,11 +162,12 @@ def compute_impsamp_dJ_hat_estimate(
 
 @functools.partial(jax.jit, static_argnames=('eval_batch_size', 'policy', 'model'))
 def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
-    key, init_states = model.batch_generate_initial_state(key, (eval_batch_size, model.state_dim))
+    key, init_model_states = model.batch_generate_initial_state(key, (eval_batch_size, model.state_dim))
     key, *subkeys = jax.random.split(key, num=eval_batch_size+1)
     subkeys = jnp.asarray(subkeys)
+    # Rollout in parallel over the eval batch
     _, states, actions, rewards = jax.vmap(
-        model.rollout_parametrized_policy, (0, 0, None), (0, 0, 0, 0))(subkeys, init_states, theta)
+        model.rollout_parametrized_policy, (0, 0, None), (0, 0, 0, 0))(subkeys, init_model_states, theta)
     rewards = jnp.sum(rewards, axis=1) # sum rewards along the time axis
     key, subkey = jax.random.split(key)
     policy_mean, policy_cov = policy.apply(subkey, theta, states)
@@ -145,40 +179,9 @@ def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
     algo_stats['policy_cov']   = algo_stats['policy_cov'].at[it].set(jnp.diag(jnp.mean(policy_cov, axis=(0,1))))
     return key, algo_stats
 
-@functools.partial(jax.jit, static_argnames=('batch_size', 'save_dJ'))
-def update_impsamp_stats(key, it, algo_stats, batch_stats, batch_size, save_dJ):
-    """Updates the REINFORCE statistics using the statistics returned
-    from the computation of dJ_hat for the current sample as well as
-    the current policy mean/cov """
-    #dJ_hat = jnp.mean(batch_stats['dJ'], axis=0)
-    #dJ_covar = jnp.cov(batch_stats['dJ'], rowvar=False)
-
-    if save_dJ:
-        algo_stats['dJ']                 = algo_stats['dJ'].at[it].set(batch_stats['dJ'])
-
-    #algo_stats['dJ_hat_max']         = algo_stats['dJ_hat_max'].at[it].set(jnp.max(dJ_hat))
-    #algo_stats['dJ_hat_min']         = algo_stats['dJ_hat_min'].at[it].set(jnp.min(dJ_hat))
-    #algo_stats['dJ_hat_norm']        = algo_stats['dJ_hat_norm'].at[it].set(jnp.linalg.norm(dJ_hat))
-    #algo_stats['dJ_covar_max']       = algo_stats['dJ_covar_max'].at[it].set(jnp.max(dJ_covar))
-    #algo_stats['dJ_covar_min']       = algo_stats['dJ_covar_min'].at[it].set(jnp.min(dJ_covar))
-    #algo_stats['dJ_covar_diag_max']  = algo_stats['dJ_covar_diag_max'].at[it].set(jnp.max(jnp.diag(dJ_covar)))
-    #algo_stats['dJ_covar_diag_min']  = algo_stats['dJ_covar_diag_min'].at[it].set(jnp.min(jnp.diag(dJ_covar)))
-    #algo_stats['dJ_covar_diag_mean'] = algo_stats['dJ_covar_diag_mean'].at[it].set(jnp.mean(jnp.diag(dJ_covar)))
-    #algo_stats['transformed_policy_sample_mean'] = algo_stats['transformed_policy_sample_mean'].at[it].set(jnp.squeeze(jnp.mean(batch_stats['actions'], axis=0)))
-    #algo_stats['transformed_policy_sample_cov']  = algo_stats['transformed_policy_sample_cov'].at[it].set(jnp.squeeze(jnp.std(batch_stats['actions'], axis=0))**2)
-    return key, algo_stats
-
 def print_impsamp_report(it, algo_stats, subt0, subt1):
     """Prints out the results for the current training iteration to console"""
     print(f'Iter {it} :: Importance Sampling :: Runtime={subt1-subt0}s')
-    print(f'Untransformed parametrized policy [Mean, Diag(Cov)] =')
-    print(algo_stats['policy_mean'][it])
-    print(algo_stats['policy_cov'][it])
-    print(f'Transformed action sample statistics [[Means], [StDevs]] =')
-    print(algo_stats['transformed_policy_sample_mean'][it])
-    print(algo_stats['transformed_policy_sample_cov'][it])
-    print(algo_stats['dJ_hat_min'][it], '<= dJ <=', algo_stats['dJ_hat_max'][it], f':: dJ norm={algo_stats["dJ_hat_norm"][it]}')
-    print('dJ covar:', algo_stats['dJ_covar_diag_min'][it], '<= Mean', algo_stats["dJ_covar_diag_mean"][it], ' <=', algo_stats["dJ_covar_diag_max"][it])
     print(f'Eval. reward={algo_stats["reward_mean"][it]:.3f} \u00B1 {algo_stats["reward_sterr"][it]:.3f}\n')
 
 
@@ -208,7 +211,6 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
     Z_estimator_config = config['Z_estimator_config']
 
     epsilon = config.get('epsilon', 1e-12)
-    save_dJ = config.get('save_dJ', False)
     verbose = config.get('verbose', False)
 
     # initialize stats collection
@@ -220,22 +222,7 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
         'reward_mean':        jnp.empty(shape=(n_iters,)),
         'reward_std':         jnp.empty(shape=(n_iters,)),
         'reward_sterr':       jnp.empty(shape=(n_iters,)),
-        'policy_mean':        jnp.empty(shape=(n_iters, A)),
-        'policy_cov':         jnp.empty(shape=(n_iters, A)),
-        'transformed_policy_sample_mean': jnp.empty(shape=(n_iters, A)),
-        'transformed_policy_sample_cov':  jnp.empty(shape=(n_iters, A)),
-        'dJ_hat_max':         jnp.empty(shape=(n_iters,)),
-        'dJ_hat_min':         jnp.empty(shape=(n_iters,)),
-        'dJ_hat_norm':        jnp.empty(shape=(n_iters,)),
-        'dJ_covar_max':       jnp.empty(shape=(n_iters,)),
-        'dJ_covar_min':       jnp.empty(shape=(n_iters,)),
-        'dJ_covar_diag_max':  jnp.empty(shape=(n_iters,)),
-        'dJ_covar_diag_min':  jnp.empty(shape=(n_iters,)),
-        'dJ_covar_diag_mean': jnp.empty(shape=(n_iters,)),
     }
-
-    if save_dJ:
-        algo_stats['dJ'] = jnp.empty(shape=(n_iters, B, P))
 
     # initialize optimizer
     opt_state = optimizer.init(policy.theta)
@@ -245,7 +232,8 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
         bijector
     ]
 
-    init_state_shape = (B, C, P, S)
+    init_model_state_shape = (B, C, P, S)
+    actions = None
 
     # run REINFORCE with Importance Sampling
     for it in range(n_iters):
@@ -254,7 +242,7 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
         key, algo_stats = evaluate_policy(key, it, algo_stats, eval_batch_size, policy.theta, policy, eval_model)
 
         # generate the initial states
-        key, init_states = train_model.batch_generate_initial_state(key, init_state_shape)
+        key, init_model_states = train_model.batch_generate_initial_state(key, init_model_state_shape)
 
         # sample action trajectories from the instrumental density
         key, subkey = jax.random.split(key)
@@ -265,22 +253,25 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
             sampling_model,
             policy.theta)
 
-        key = sampler.generate_step_size(key)
+        key, sampler_step_size = sampler.generate_step_size(key)
+        key, sampler_init_states = sampler.generate_initial_state(key, it, init_model_states, actions)
         key = sampler.prep(key,
                            it,
                            target_log_prob_fn=unnorm_log_density_vector,
-                           unconstraining_bijector=unconstraining_bijector)
-        key = sampler.generate_initial_state(key, it, init_states)
+                           unconstraining_bijector=unconstraining_bijector,
+                           step_size=sampler_step_size)
+
         try:
-            key, actions, accepted_matrix = sampler.sample(key, policy.theta, init_states)
+            key, (init_model_states, actions), accepted_matrix = sampler.sample(key, policy.theta, init_model_states, sampler_step_size, sampler_init_states)
+            init_model_states = init_model_states[0].reshape(B*C, P, S)
+            actions = actions[0].reshape(B*C, P, T, A)
         except FloatingPointError as e:
             warnings.warn(f'[impsamp] Iteration {it}. Caught FloatingPointError exception during sampling')
             break
 
-        init_states = init_states[:, 0] # remove the C axis.TODO: Figure out what the right thing to do is
         key, dJ_hat, batch_stats = compute_impsamp_dJ_hat_estimate(
             key, epsilon, policy, sampling_model, train_model, Z_estimator_config['n_samples'],
-            policy.theta, init_states, actions)
+            policy.theta, init_model_states, actions)
 
         # update the policy
         updates, opt_state = optimizer.update(dJ_hat, opt_state)
@@ -298,5 +289,9 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
         'n_iters': n_iters,
         'config': config,
     })
+
+    import matplotlib.pyplot as plt
+    plt.plot(range(n_iters), algo_stats['reward_mean'])
+    plt.savefig('/tmp/plot.png')
 
     return key, algo_stats

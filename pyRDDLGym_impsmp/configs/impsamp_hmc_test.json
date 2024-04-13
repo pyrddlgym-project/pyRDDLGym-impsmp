@@ -1,11 +1,11 @@
-{ "useGPU": true,
+{ "useGPU": false,
   "use64bit": true,
   "debug_nans": false,
   "enable_jit": true,
   "seed": 3264,
   "state_dim": 2,
   "action_dim": 2,
-  "n_iters": 100,
+  "n_iters": 250,
   "models": {
     "type": "sum_of_half_spaces",
     "params": {
@@ -59,7 +59,7 @@
   "policy": {
     "type": "multivar_normal_with_state_dependent_linear_parametrization",
     "params": {
-        "cov_lower_cap": 0.00
+        "cov_lower_cap": 0.05
     }
   },
   "optimizer": {
@@ -71,19 +71,33 @@
   "algorithm": {
     "type": "impsamp",
     "params": {
-      "batch_size": 4,
+      "batch_size": 32,
       "n_parallel_sampler_chains": 1,
       "eval_batch_size": 32,
       "sampler": {
-        "type": "fixed_num_accepted_rejection_sampler",
+        "type": "hmc",
         "params": {
-          "proposal_pdf_type": "rollout_cur_policy",
-          "rejection_rate_schedule": {
-            "type": "constant_value",
+          "chain_len": 1,
+          "step_size_distribution": {
+            "type": "constant",
             "params": {
-              "value": 100
+              "value": 0.1
             }
-          }
+          },
+          "init_strategy": {
+            "type": "uniform",
+            "params": {
+              "min": -2.0,
+              "max": 2.0
+            }
+          },
+          "reinit_strategy": {
+            "type": "rollout_cur_policy",
+            "params": {}
+          },
+          "num_leapfrog_steps": 3,
+          "burnin_per_chain": 128,
+          "num_adaptation_steps": null
         }
       },
       "Z_estimator_config": {

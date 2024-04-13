@@ -3,6 +3,8 @@ import argparse
 from datetime import datetime
 from copy import deepcopy
 from time import sleep
+
+from tensorflow_probability.substrates import jax as tfp
 import numpy as np
 import json
 import jax
@@ -108,6 +110,7 @@ def main(config):
         sampler = sampler_cls(
             n_iters=n_iters,
             batch_size=batch_size,
+            num_chains=algorithm_params['n_parallel_sampler_chains'],
             state_dim=state_dim,
             action_dim=action_dim,
             model=models['sampling_model'],

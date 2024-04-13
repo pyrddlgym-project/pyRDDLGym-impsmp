@@ -5,7 +5,7 @@
   "seed": 3264,
   "state_dim": 2,
   "action_dim": 2,
-  "n_iters": 100,
+  "n_iters": 250,
   "models": {
     "type": "sum_of_half_spaces",
     "params": {
@@ -71,19 +71,36 @@
   "algorithm": {
     "type": "impsamp",
     "params": {
-      "batch_size": 4,
+      "batch_size": 128,
       "n_parallel_sampler_chains": 1,
       "eval_batch_size": 32,
       "sampler": {
-        "type": "fixed_num_accepted_rejection_sampler",
+        "type": "nuts",
         "params": {
-          "proposal_pdf_type": "rollout_cur_policy",
-          "rejection_rate_schedule": {
-            "type": "constant_value",
+          "chain_len": 1,
+          "step_size_distribution": {
+            "type": "constant",
             "params": {
-              "value": 100
+              "value": 0.1
             }
-          }
+          },
+          "init_strategy": {
+            "type": "uniform",
+            "params": {
+              "min": -2.0,
+              "max": 2.0
+            }
+          },
+          "reinit_strategy": {
+            "type": "uniform",
+            "params": {
+              "min": -2.0,
+              "max": 2.0
+            }
+          },
+          "burnin_per_chain": 128,
+          "max_tree_depth": 10,
+          "num_adaptation_steps": null
         }
       },
       "Z_estimator_config": {
@@ -93,5 +110,5 @@
       "verbose": true
     }
   },
-  "save_to": "/home/ilia/Programming/storage/tmp"
+  "save_to": null
 }

@@ -3,11 +3,6 @@ import jax.numpy as jnp
 from tensorflow_probability.substrates import jax as tfp
 from pyRDDLGym_impsmp.samplers.rejection_sampler import FixedNumTrialsRejectionSampler
 
-VALID_INIT_DISTR_TYPES = (
-    'uniform',
-    'normal',
-)
-
 VALID_STEP_SIZE_DISTR_TYPES = (
     'constant',
     'uniform',
@@ -15,10 +10,17 @@ VALID_STEP_SIZE_DISTR_TYPES = (
     'log_uniform',
 )
 
+VALID_INIT_STRATEGY_TYPES = (
+    'uniform',
+    'normal',
+    'rollout_cur_policy',
+)
+
 VALID_REINIT_STRATEGY_TYPES = (
-    'random_sample',
     'random_prev_chain_elt',
-    'cur_policy',
+    'uniform',
+    'normal',
+    'rollout_cur_policy',
     'rejection_sampler',
 )
 
@@ -30,32 +32,47 @@ def compute_next_sample_corr(D):
     return K[sample_size]
 
 
-
 class HMCSampler:
     def __init__(self,
                  n_iters,
                  batch_size,
+                 num_chains,
+                 state_dim,
                  action_dim,
+                 model,
                  policy,
                  config):
-        self.batch_size = batch_size
-        self.action_dim = action_dim
+
+        # Shorthands for common parameters
+        # B: Sample batch size
+        # C: Number of parallel HMC chains
+        # P: Number of policy parameters
+        # T: Environment horizon
+        # S: State space dimension
+        # A: Action space dimension
+        self.B = batch_size
+        self.C = num_chains
+        self.P = policy.n_params
+        self.T = model.horizon
+        self.S = state_dim
+        self.A = action_dim
+        self.model = model
         self.policy = policy
         self.config = config
 
-        self.config['num_iters_per_chain'] = int(batch_size / self.config['num_chains'])
-        assert self.config['num_iters_per_chain'] > 0, (
-            f'[HMCSampler] Please check that batch_size >= sampler["num_chains"]. '
-            f'batch_size={batch_size}, sampler["num_chains"]={config["num_chains"]}')
+        self.chain_len = config['chain_len']
 
-        if self.config['init_distribution']['type'] == 'normal':
-            self.config['init_distribution']['std'] = jnp.sqrt(self.config['init_distribution']['var'])
+        if self.config['init_strategy']['type'] == 'normal':
+            self.config['init_strategy']['params']['std'] = jnp.sqrt(self.config['init_strategy']['params']['var'])
 
         self.reinit_strategy = self.config['reinit_strategy']
 
-        assert self.config['init_distribution']['type'] in VALID_INIT_DISTR_TYPES
         assert self.config['step_size_distribution']['type'] in VALID_STEP_SIZE_DISTR_TYPES
+        assert self.config['init_strategy']['type'] in VALID_INIT_STRATEGY_TYPES
         assert self.config['reinit_strategy']['type'] in VALID_REINIT_STRATEGY_TYPES
+
+
+
 
         self.divergence_threshold = self.config.get('divergence_threshold', 10.)
         self.track_next_sample_correlation = self.config.get('track_next_sample_correlation', False)
@@ -74,152 +91,161 @@ class HMCSampler:
                 'next_sample_correlation_max': jnp.empty(shape=(n_iters,)),
             })
 
-        # @@@@@
-        self.rej_subsampler = FixedNumTrialsRejectionSampler(
-            n_iters,
-            1,
-            action_dim,
-            policy,
-            config={
-                'proposal_pdf_type': 'cur_policy',
-                'sample_shape_type': 'one_sample_per_parameter',
-                'rejection_rate_schedule': {
-                    'type': 'constant',
-                    'params': {
-                        'value': 250
-                    }
-                }
-            })
-         #@@@@@
-
-    def generate_initial_state(self, key, it, prev_samples):
-        key, subkey = jax.random.split(key)
-
-        #@@@@
-        if it == 0:
-            shape = (self.config['num_chains'], self.action_dim, 2, 1, self.action_dim)
-            config = self.config['init_distribution']
-            if config['type'] == 'uniform':
-                self.init_state = jax.random.uniform(
-                    subkey,
-                    shape=shape,
-                    minval=config['min'],
-                    maxval=config['max'])
-            elif config['type'] == 'normal':
-                self.init_state = jax.random.normal(
-                    subkey,
-                    shape=shape)
-                self.init_state = config['mean'] + self.init_state * config['std']
-
-        #@@@@
-        else:
-            if self.config['reinit_strategy']['type'] == 'random_prev_chain_elt':
-                self.init_state = jax.random.choice(
-                    subkey,
-                    a=prev_samples,
-                    shape=(self.config['num_chains'],),
-                    replace=False)
-
-            elif self.config['reinit_strategy']['type'] == 'random_sample':
-                shape = (self.config['num_chains'], self.action_dim, 2, 1, self.action_dim)
-                config = self.config['init_distribution']
-                if config['type'] == 'uniform':
-                    self.init_state = jax.random.uniform(
-                        subkey,
-                        shape=shape,
-                        minval=config['min'],
-                        maxval=config['max'])
-                elif config['type'] == 'normal':
-                    self.init_state = jax.random.normal(
-                        subkey,
-                        shape=shape)
-                    self.init_state = config['mean'] + self.init_state * config['std']
-
-            elif self.config['reinit_strategy']['type'] == 'cur_policy':
-                shape = (self.config['num_chains'], self.action_dim, 2, 1, self.action_dim)
-                self.init_state = self.policy.sample(subkey, self.policy.theta, shape[:-1])
-
-            elif self.config['reinit_strategy']['type'] == 'rejection_sampler':
-                key, self.init_state, _ = self.rej_subsampler.sample(key, self.policy.theta)
-
-        return key
-
-    def set_initial_state(self, state):
-        self.init_state = state
+        # @@@@@ BEGIN
+        #self.rej_subsampler = FixedNumTrialsRejectionSampler(
+        #    n_iters,
+        #    1,
+        #    action_dim,
+        #    policy,
+        #    config={
+        #        'proposal_pdf_type': 'cur_policy',
+        #        'sample_shape_type': 'one_sample_per_parameter',
+        #        'rejection_rate_schedule': {
+        #            'type': 'constant',
+        #            'params': {
+        #                'value': 250
+        #            }
+        #        }
+        #    })
+         #@@@@@ END
 
     def generate_step_size(self, key):
+        """The HMC step size may follow a schedule or may be drawn from a
+        random distribution to avoid getting stuck in a periodic pattern.
+        """
         key, subkey = jax.random.split(key)
 
         config = self.config['step_size_distribution']
-        if config['type'] == 'constant':
-            self.step_size = config['value']
-        elif config['type'] == 'uniform':
-            self.step_size = jax.random.uniform(
+        type = config['type']
+        params = config['params']
+        if type == 'constant':
+            step_size = params['value']
+        elif type == 'uniform':
+            step_size = jax.random.uniform(
                 subkey,
-                minval=config['min'],
-                maxval=config['max'])
-        elif config['type'] == 'discrete_uniform':
+                minval=params['min'],
+                maxval=params['max'])
+        elif type == 'discrete_uniform':
             index = jax.random.randint(
                 subkey,
                 shape=(),
-                minval=0, maxval=len(config['values']))
-            self.step_size = config['values'][index]
-        elif config['type'] == 'log_uniform':
+                minval=0, maxval=len(params['values']))
+            step_size = params['values'][index]
+        elif type == 'log_uniform':
             log_step_size = jax.random.uniform(
                 subkey,
                 shape=(),
-                minval=jnp.log(config['min']),
-                maxval=jnp.log(config['max']))
-            self.step_size = jnp.exp(log_step_size)
-        return key
+                minval=jnp.log(params['min']),
+                maxval=jnp.log(params['max']))
+            step_size = jnp.exp(log_step_size)
+        return key, step_size
 
+    def generate_initial_state(self, key, it, init_model_state, prev_sample):
+        """The HMC chains may be initialized with a variety of strategies."""
+        key, subkey = jax.random.split(key)
+
+        if it == 0:
+            config = self.config['init_strategy']
+            type = config['type']
+            params = config['params']
+        else:
+            config = self.config['reinit_strategy']
+            type = config['type']
+            params = config['params']
+
+        if type == 'random_prev_chain_elt':
+            #index_range = self.B * self.C * self.P
+            #sampled_indices = jax.random.choice(
+            #    subkey,
+            #    a=index_range,
+            #    shape=(self.C * self.P,),
+            #    replace=False)
+            #prev_sample = prev_sample.reshape(index_range, self.T, self.A) # Flatten the front
+            #init_state = prev_sample[sampled_indices]
+            #init_state = init_state.reshape(self.C, self.P, self.T, self.A) # Unflatten
+            init_state = prev_sample.reshape(self.B, self.C, self.P, self.T, self.A)
+
+        elif type == 'uniform':
+            shape = (self.B, self.C, self.P, self.T, self.A)
+            init_state = jax.random.uniform(
+                subkey,
+                shape=shape,
+                minval=params['min'],
+                maxval=params['max'])
+
+        elif type == 'normal':
+            init_state = jax.random.normal(subkey, shape=shape)
+            init_state = params['mean'] + init_state * params['std']
+
+        elif type == 'rollout_cur_policy':
+            total_rollouts = self.B * self.C * self.P
+            parallel_rollout_keys = jnp.asarray(jax.random.split(subkey, num=total_rollouts))
+            flat_init_model_state = init_model_state.reshape(total_rollouts, self.S)
+            parallel_rollout = jax.vmap(self.model.rollout_parametrized_policy, (0, 0, None), (0, 0, 0, 0))
+            _, _, sampled_actions, _ = parallel_rollout(parallel_rollout_keys, flat_init_model_state, self.policy.theta)
+            init_state = sampled_actions.reshape(self.B, self.C, self.P, self.T, self.A)
+
+        elif type == 'rejection_sampler':
+            key, init_state, _ = self.rej_subsampler.sample(key, self.policy.theta)
+
+        return key, init_state
 
     def prep(self,
              key,
              it,
              target_log_prob_fn,
-             unconstraining_bijector):
+             unconstraining_bijector,
+             step_size):
+        """Initialize the HMC sampler for the current iteration."""
 
         num_leapfrog_steps = self.config['num_leapfrog_steps']
-        num_burnin_steps = self.config['num_burnin_iters_per_chain']
+        num_burnin_steps = self.config['burnin_per_chain']
         num_adaptation_steps = self.config.get('num_adaptation_steps')
 
         if num_adaptation_steps is None:
             num_adaptation_steps = int(num_burnin_steps * 0.8)
 
-        parallel_log_density_over_chains = jax.vmap(target_log_prob_fn, 0, 0)
+        parallel_log_density_B = jax.vmap(target_log_prob_fn, (0, 0), 0)
+        parallel_log_density_BC = jax.vmap(parallel_log_density_B, (0, 0), 0)
 
         hmc_sampler = tfp.mcmc.HamiltonianMonteCarlo(
-            target_log_prob_fn=parallel_log_density_over_chains,
-            step_size=self.step_size,
+            target_log_prob_fn=parallel_log_density_BC,
+            step_size=step_size,
             num_leapfrog_steps=num_leapfrog_steps)
 
         hmc_sampler_with_adaptive_step_size = tfp.mcmc.SimpleStepSizeAdaptation(
             inner_kernel=hmc_sampler,
             num_adaptation_steps=num_adaptation_steps)
 
-        self.sampler = tfp.mcmc.TransformedTransitionKernel(
-            inner_kernel=hmc_sampler_with_adaptive_step_size,
-            bijector=unconstraining_bijector)
+        self.sampler = hmc_sampler_with_adaptive_step_size
 
-        #@@@@
-        key = self.rej_subsampler.prep(key, it, target_log_prob_fn, unconstraining_bijector)
-        #@@@@
+        #@@@@ BEGIN
+        #TODO: Fix the bijector (only apply to 2nd arg)
+        #self.sampler = tfp.mcmc.TransformedTransitionKernel(
+        #    inner_kernel=hmc_sampler_with_adaptive_step_size,
+        #    bijector=unconstraining_bijector)
+
+        #key = self.rej_subsampler.prep(key, it, target_log_prob_fn, unconstraining_bijector)
+        #@@@@ END
         return key
 
-    def sample(self, key, theta):
+    def sample(self, key, theta, init_model_states, sampler_step_size, sampler_init_state):
         key, subkey = jax.random.split(key)
         return key, *tfp.mcmc.sample_chain(
             seed=subkey,
-            num_results=self.config['num_iters_per_chain'],
-            num_burnin_steps=self.config['num_burnin_iters_per_chain'],
-            current_state=self.init_state,
+            num_results=1,
+            num_burnin_steps=self.config['burnin_per_chain'],
+            current_state=(init_model_states, sampler_init_state),
             kernel=self.sampler,
-            trace_fn=lambda _, pkr: pkr.inner_results.inner_results.is_accepted)
+            trace_fn=lambda _, pkr: pkr.inner_results.is_accepted)
+            #@@@@ BEGIN
+            #TODO: Revert to previous version below once bijector fixed
+            #trace_fn=lambda _, pkr: pkr.inner_results.inner_results.is_accepted)
+            #@@@@ END
 
-    def update_stats(self, it, samples, is_accepted):
+    def update_stats(self, it, samples, is_accepted, step_size):
         self.stats['acceptance_rate'] = self.stats['acceptance_rate'].at[it].set(jnp.mean(is_accepted))
-        self.stats['step_size'] = self.stats['step_size'].at[it].set(self.step_size)
+        self.stats['step_size'] = self.stats['step_size'].at[it].set(step_size)
 
         num_chains = self.config['num_chains']
         num_samples_per_chain = self.config['num_iters_per_chain']
@@ -252,30 +278,36 @@ class NoUTurnSampler(HMCSampler):
              key,
              it,
              target_log_prob_fn,
-             unconstraining_bijector):
-        num_burnin_iters_per_chain = self.config['num_burnin_iters_per_chain']
+             unconstraining_bijector,
+             step_size):
+
+        num_burnin_iters_per_chain = self.config['burnin_per_chain']
         num_adaptation_steps = self.config.get('num_adaptation_steps')
         max_tree_depth = self.config['max_tree_depth']
 
         if num_adaptation_steps is None:
             num_adaptation_steps = int(num_burnin_iters_per_chain * 0.8)
 
-        parallel_log_density_over_chains = jax.vmap(target_log_prob_fn, 0, 0)
+        parallel_log_density_B = jax.vmap(target_log_prob_fn, (0, 0), 0)
+        parallel_log_density_BC = jax.vmap(parallel_log_density_B, (0, 0), 0)
 
         nuts = tfp.mcmc.NoUTurnSampler(
-            target_log_prob_fn=parallel_log_density_over_chains,
-            step_size=self.step_size,
+            target_log_prob_fn=parallel_log_density_BC,
+            step_size=step_size,
             max_tree_depth=max_tree_depth)
 
         nuts_with_adaptive_step_size = tfp.mcmc.DualAveragingStepSizeAdaptation(
             inner_kernel=nuts,
             num_adaptation_steps=num_adaptation_steps)
 
-        self.sampler = tfp.mcmc.TransformedTransitionKernel(
-            inner_kernel=nuts_with_adaptive_step_size,
-            bijector=unconstraining_bijector)
+        self.sampler = nuts_with_adaptive_step_size
+        #@@@@ BEGIN
+        #self.sampler = tfp.mcmc.TransformedTransitionKernel(
+        #    inner_kernel=nuts_with_adaptive_step_size,
+        #    bijector=unconstraining_bijector)
 
-        key = self.rej_subsampler.prep(key, it, target_log_prob_fn, unconstraining_bijector)
+        #key = self.rej_subsampler.prep(key, it, target_log_prob_fn, unconstraining_bijector)
+        #@@@@ END
         return key
 
     def print_report(self, it):
