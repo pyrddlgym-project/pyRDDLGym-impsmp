@@ -68,7 +68,6 @@ optimizer_lookup_table = {
 
 policy_lookup_table = {
     'multivar_normal_with_linear_parametrization': pyRDDLGym_impsmp.policies.normal.MultivarNormalLinearParametrization,
-    'multivar_normal_with_state_dependent_linear_parametrization': pyRDDLGym_impsmp.policies.normal.MultivarNormalLinearStateDependentParametrization,
     'multivar_normal_with_mlp_parametrization': pyRDDLGym_impsmp.policies.normal.MultivarNormalMLPParametrization,
 }
 

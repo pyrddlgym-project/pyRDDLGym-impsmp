@@ -43,9 +43,10 @@
     "params": {}
   },
   "policy": {
-    "type": "multivar_normal_with_state_dependent_linear_parametrization",
+    "type": "multivar_normal_with_linear_parametrization",
     "params": {
-        "cov_lower_cap": 0.00
+        "compute_jacobians_analytically": true,
+        "cov_lower_cap": 0.05
     }
   },
   "adv_estimator": {
