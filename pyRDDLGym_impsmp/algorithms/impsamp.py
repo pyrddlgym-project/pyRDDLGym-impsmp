@@ -195,7 +195,7 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
 
     sampling_model = models['sampling_model']
     train_model = models['train_model']
-    eval_model = models['eval_model']
+    eval_model = models.get('eval_model', train_model)
 
     # Shorthands for common parameters
     # B = Sample batch size

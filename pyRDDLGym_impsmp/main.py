@@ -72,10 +72,8 @@ def main(config):
         **policy_params)
 
     # configure the model(s)
-    # (note: frequently, the training and evaluation models are configured separately,
-    # even if both are not relaxed, because just-in-time compiled (jitted) functions
-    # require the shapes of the arguments to be immutable. Training and evaluation models
-    # tend to have different batch sizes, therefore different rollout shapes)
+    # (note: if the evaluation model is not configured separately,
+    # the training model will be used for evaluation)
     model_config = config['models']
     model_cls = registry.model_lookup_table[model_config['type']]
     model_params = model_config['params']
@@ -154,16 +152,16 @@ def main(config):
     save_to = config.get('save_to')
     if save_to is not None:
         timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        filename = f'{timestamp}_{algorithm_config["type"]}_{model_config["type"]}_a{action_dim}_iters{n_iters}'
+        filename = f'{timestamp}_{algorithm_config["type"]}_{model_config["type"]}'
 
         path = os.path.join(save_to, f'{filename}.json')
-        # possible race-condition on file write
+        # handle possible race-condition on file write
         if os.path.isfile(path):
-            disambiguator = 1
+            disambiguator_idx = 1
             while os.path.isfile(path):
                 sleep(1)
-                path = os.path.join(save_to, f'{filename}-{disambiguator}.json')
-                disambiguator = disambiguator + 1
+                path = os.path.join(save_to, f'{filename}-{disambiguator_idx}.json')
+                disambiguator += 1
 
         saved_dict.update(algo_stats)
         with open(path, 'w') as file:
@@ -172,28 +170,25 @@ def main(config):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Launch a training run for one of the implemented Policy Gradient algorithms.')
+    parser = argparse.ArgumentParser(description='Launch a training run configured by the specified JSON file.')
     parser.add_argument('config_path', type=str, help='Path to the configuration file (JSON format, please see the "configs" subdirectory for examples).')
-    parser.add_argument('-s', '--save-to', type=str, help='Path where to save the stats results. Optional, defaults to /tmp')
 
-    parser.add_argument('-d', '--dimension', type=int, help='Override the dimension setting.')
-    parser.add_argument('-i', '--instance-index', type=int, help='Override the instance index setting.')
+    parser.add_argument('-s', '--save-to', type=str, help='Path where to save the results dump. Optional, defaults to `null` (i.e. do not save)')
     parser.add_argument('-l', '--learning-rate', type=float, help='Override the learning rate setting.')
     parser.add_argument('-b', '--batch-size', type=int, help='Override the batch size setting.')
     parser.add_argument('--num-iters', type=int, help='Override the number of training iterations setting.')
 
     parser.add_argument('--verbose', type=int, help='Override the verbose printout setting.')
+
     args = parser.parse_args()
 
     with open(args.config_path, 'r') as jsonfile:
         config = json.load(jsonfile)
 
+    # if requested, override the configuration parameters from the config file
+    # with the ones passed via the command line
     if args.num_iters is not None:
         config['n_iters'] = args.num_iters
-    if args.dimension is not None:
-        config['action_dim'] = args.dimension
-    if args.instance_index is not None:
-        config['models']['params']['instance_idx'] = args.instance_index
     if args.learning_rate is not None:
         config['optimizer']['params']['learning_rate'] = args.learning_rate
     if args.batch_size is not None:

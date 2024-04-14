@@ -103,7 +103,7 @@ def print_reinforce_report(it, algo_stats, subt0, subt1):
 def reinforce(key, n_iters, config, bijector, policy, sampler, optimizer, models, adv_estimator, adv_estimator_state):
     """Runs the REINFORCE algorithm"""
     train_model = models['train_model']
-    eval_model = models['eval_model']
+    eval_model = models.get('eval_model', train_model)
 
     state_dim = train_model.state_dim
     action_dim = train_model.action_dim
