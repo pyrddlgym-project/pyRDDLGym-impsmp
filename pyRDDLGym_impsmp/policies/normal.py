@@ -53,9 +53,7 @@ class MultivarNormalHKParametrization:
 
     def sample_batch(self, key, theta, state, n):
         mean, cov = self.apply(key, theta, state)
-        action_sample = jax.random.multivariate_normal(
-            key, mean, cov,
-            shape=n)
+        action_sample = jax.random.multivariate_normal(key, mean, cov, shape=n)
         action_sample = self.bijector.forward(action_sample)
         return action_sample
 
@@ -126,17 +124,22 @@ class MultivarNormalHKParametrization:
         return jnp.prod(pdfs, axis=-1)
 
     def autodiff_diagonal_of_jacobian(self, key, theta, s, a):
-        """A computation of the diagonal of the Jacobian matrix, i.e. the terms
-                                 \partial pi_i
-                                 ------------    (i=1, 2, ..., n)
-                                 \partial x_i
-        where
+        """The Importance Sampling augmentation of the REINFORCE algorithm
+        introduces a family of instrumental densities rho_i, one per parameter
+        theta_i.
 
-            F(x_1, ..., x_n) = (f_1(x_1, ..., x_n), ..., f_n(x_1, ..., x_n))
+        When sampling from this family of densities, we frequently need to
+        evaluate terms of the form
 
-        is a vector-valued function, which uses JAX primitives, and works with
-        any policy parametrization.
+                          \partial pi
+                        ---------------- (a_i | s_i)    (i=1, 2, ..., n)
+                        \partial theta_i
 
+        that is, each parameter theta_i has a dedicated state-action sample
+        (a_i, s_i). Treating pi as a vector-valued function (mapping into R^n),
+        we see that we are looking for the diagonal of an n x n Jacobian matrix.
+
+        The `autodiff` implementation of the computation uses JAX primitives.
         The disadvantage of this approach is that the entire Jacobian needs to
         be computed before taking the diagonal. Therefore, the computation time
         scales rather poorly with increasing dimension. There is apparently no
@@ -145,24 +148,31 @@ class MultivarNormalHKParametrization:
 
         See also:
             https://stackoverflow.com/questions/70956578/jacobian-diagonal-computation-in-jax
+
+        The `_traj` version of the problem is similar, but computes the partial
+        derivatives of the probabilities of a sample of full state-action trajectories
+        under the policy pi.
+
+        The `analytic` versions of these computations perform the partial
+        derivative computations by-hand. This way, we can only perform the
+        computation of the diagonal terms, without computing the entire
+        Jacobian matrix. This can significantly improve the scaling of
+        computation time with respect to dimension.
         """
         raise NotImplementedError
 
     def autodiff_diagonal_of_jacobian_traj(self, key, theta, states, actions):
-        """ ."""
+        """Please see the docstring for `autodiff_diagonal_of_jacobian`"""
         raise NotImplementedError
 
     def analytic_diagonal_of_jacobian(self, key, theta, s, a):
-        """When it is possible to compute the diagonal of the Jacobian terms
-        analytically (as it is for the linear parametrization of a normal distribution,
-        for example), substituting the analytic computation in place of the general
-        auto-differentiation as in the diagonal_of_jacobian method can significantly
-        improve scaling of computation time with respect to dimension"""
+        """Please see the docstring for `autodiff_diagonal_of_jacobian`"""
         raise NotImplementedError
 
     def analytic_diagonal_of_jacobian_traj(self, key, theta, states, actions):
-        """ . """
+        """Please see the docstring for `autodiff_diagonal_of_jacobian`"""
         raise NotImplementedError
+
 
 
 class MultivarNormalLinearParametrization(MultivarNormalHKParametrization):
@@ -197,7 +207,7 @@ class MultivarNormalLinearParametrization(MultivarNormalHKParametrization):
         def pi(input):
             linear = hk.Linear(2 * action_dim, with_bias=True)
             output = linear(input)
-            mean, cov = jnp.split(output, action_dim, axis=-1)
+            mean, cov = jnp.split(output, 2, axis=-1)
             cov = jax.nn.softplus(cov)
             cov = jnp.maximum(cov, self.cov_lower_cap)
             cov_diag = jnp.apply_along_axis(jnp.diag, axis=-1, arr=cov)
@@ -211,7 +221,7 @@ class MultivarNormalLinearParametrization(MultivarNormalHKParametrization):
     def apply(self, key, theta, state):
         return self.pi.apply(theta, key, state)
 
-    def diagonal_of_jacobian(self, key, theta, s, a):
+    def autodiff_diagonal_of_jacobian(self, key, theta, s, a):
         """Please see the base class.
 
         The input states and actions should have shape
@@ -227,7 +237,7 @@ class MultivarNormalLinearParametrization(MultivarNormalHKParametrization):
         dpi_matrix = jnp.concatenate([dpi_w, dpi_b], axis=-1)
         return jnp.diagonal(dpi_matrix)
 
-    def diagonal_of_jacobian_traj(self, key, theta, states, actions):
+    def autodiff_diagonal_of_jacobian_traj(self, key, theta, states, actions):
         """Please see the base class.
 
         The input state and action trajectories should have shape
@@ -244,7 +254,7 @@ class MultivarNormalLinearParametrization(MultivarNormalHKParametrization):
         return jnp.diagonal(dpi_matrix)
 
     def analytic_diagonal_of_jacobian(self, key, theta, s, a):
-        """Please see the base class and the docstring for `diagonal_of_jacobian`"""
+        """Please see the base class and the docstring for `autodiff_diagonal_of_jacobian`"""
         pi_val = self.pdf(key, theta, s, a)[:, jnp.newaxis]
         mu, cov = self.apply(key, theta, s)
         var = jnp.diagonal(cov, axis1=-2, axis2=-1)
@@ -267,7 +277,7 @@ class MultivarNormalLinearParametrization(MultivarNormalHKParametrization):
         return jac_diagonal
 
     def analytic_diagonal_of_jacobian_traj(self, key, theta, states, actions):
-        """Please see the base class and the docstring for `diagonal_of_jacobian_traj`.
+        """Please see the base class and the docstring for `autodiff_diagonal_of_jacobian`.
         Applies `analytic_diagonal_of_jacobian` and the product rule."""
         T = states.shape[-2]
         key, subkey = jax.random.split(key)
@@ -277,7 +287,7 @@ class MultivarNormalLinearParametrization(MultivarNormalHKParametrization):
         subkeys = jnp.asarray(subkeys)
         dpi_vals = jax.vmap(self.analytic_diagonal_of_jacobian, (0, None, 1, 1), 1)(subkeys, theta, states, actions)
 
-        ratios = dpi_vals / pi_vals
+        ratios = dpi_vals / (pi_vals + 1e-12)
         jac_diagonal = jnp.prod(pi_vals, axis=-1) * jnp.sum(ratios, axis=-1)
 
         return jac_diagonal
@@ -326,7 +336,7 @@ class MultivarNormalMLPParametrization(MultivarNormalHKParametrization):
 
 if __name__ == '__main__':
     # define tests
-    def linear_param_test_analytic_derivative_matches_autograd_derivative(action_dim, test_sample_size, cpu):
+    def linear_param_test_analytic_derivative_matches_autograd_derivative(state_dim, action_dim, horizon, test_sample_size, cpu):
         """Test that the analytic derivative and the autograd derivative yield consistent results"""
         import pyRDDLGym_impsmp.bijectors
         if cpu:
@@ -336,24 +346,65 @@ if __name__ == '__main__':
         key = jax.random.PRNGKey(42)
         test_policy = MultivarNormalLinearParametrization(
             key=key,
+            state_dim=state_dim,
             action_dim=action_dim,
             bijector=bij_identity,
             cov_lower_cap=0.0)
 
-        key, *subkeys = jax.random.split(key, num=4)
-        a = test_policy.sample(subkeys[0], test_policy.theta, (test_sample_size, action_dim, 2, 1))
+        key, state_gen_key = jax.random.split(key)
 
-        autograd_dpi = jax.vmap(test_policy.diagonal_of_jacobian, (None, None, 0), 0)(subkeys[1], test_policy.theta, a)['linear']['w']
-        analytic_dpi = jax.vmap(test_policy.analytic_diagonal_of_jacobian, (None, None, 0), 0)(subkeys[2], test_policy.theta, a)
+        B = test_sample_size
+        P = test_policy.n_params
+        T = horizon
 
-        print('[linear_param_test_analytic_derivative_matches_autograd_derivative] First three samples of diag(Jacobian) computed using autograd:')
-        print(autograd_dpi[:3])
+        state_mean = jnp.zeros((B, P, T, state_dim))
+        state_cov = jnp.diag(jnp.ones(state_dim))
+        state_cov = jnp.stack([state_cov] * T, axis=0)
+        state_cov = jnp.stack([state_cov] * P, axis=0)
+        state_cov = jnp.stack([state_cov] * B, axis=0)
+        states = jax.random.multivariate_normal(state_gen_key, state_mean, state_cov, shape=(B, P, T))
+
+        sample_B = jax.vmap(test_policy.sample, (0, None, 0), 0)
+        sample_BP = jax.vmap(sample_B, (0, None, 0), 0)
+        sample_BPT = jax.vmap(sample_BP, (0, None, 0), 0)
+
+        key, *action_sample_subkeys = jax.random.split(key, num=1+B*P*T)
+        action_sample_subkeys = jnp.asarray(action_sample_subkeys).reshape(B, P, T, 2)
+        actions = sample_BPT(action_sample_subkeys, test_policy.theta, states)
+
+        key, *subkeys = jax.random.split(key, num=1+4*B)
+        autodiff_keys = jnp.asarray(subkeys[:B])
+        analytic_keys = jnp.asarray(subkeys[B:2*B])
+        autodiff_traj_keys = jnp.asarray(subkeys[2*B:3*B])
+        analytic_traj_keys = jnp.asarray(subkeys[3*B:4*B])
+
+        # single-sample test
+        autodiff_dpi = jax.vmap(test_policy.autodiff_diagonal_of_jacobian, (0, None, 0, 0), 0)(autodiff_keys, test_policy.theta, states[:, :, 0], actions[:, :, 0])
+        analytic_dpi = jax.vmap(test_policy.analytic_diagonal_of_jacobian, (0, None, 0, 0), 0)(analytic_keys, test_policy.theta, states[:, :, 0], actions[:, :, 0])
+
+        print('[linear_param_test_analytic_derivative_matches_autograd_derivative] First three samples of diag(Jacobian) computed using autodiff (JAX primitives):')
+        print(autodiff_dpi[:3])
         print('[linear_param_test_analytic_derivative_matches_autograd_derivative] First three samples of diag(Jacobian) computed using analytic formula:')
         print(analytic_dpi[:3])
 
-        test_result = jnp.all(jnp.isclose(autograd_dpi, analytic_dpi))
-        print(f'[linear_param_test_analytic_derivative_matches_autograd_derivative] All samples, all coordinates close: {test_result}')
-        return test_result
+        test_result_single = jnp.all(jnp.isclose(autodiff_dpi, analytic_dpi))
+        # done
+
+        # trajectory test
+        autodiff_traj_dpi = jax.vmap(test_policy.autodiff_diagonal_of_jacobian_traj, (0, None, 0, 0), 0)(autodiff_keys, test_policy.theta, states, actions)
+        analytic_traj_dpi = jax.vmap(test_policy.analytic_diagonal_of_jacobian_traj, (0, None, 0, 0), 0)(analytic_keys, test_policy.theta, states, actions)
+
+        print('[linear_param_test_analytic_derivative_matches_autograd_derivative] First three samples of diag(JacobianTraj) computed using autodiff (JAX primitives):')
+        print(autodiff_traj_dpi[:3])
+        print('[linear_param_test_analytic_derivative_matches_autograd_derivative] First three samples of diag(JacobianTraj) computed using analytic formula:')
+        print(analytic_traj_dpi[:3])
+
+        test_result_traj = jnp.all(jnp.isclose(autodiff_traj_dpi, analytic_traj_dpi))
+        # done
+
+        print(f'[linear_param_test_analytic_derivative_matches_autograd_derivative] Single-sample: All coordinates close: {test_result_single}')
+        print(f'[linear_param_test_analytic_derivative_matches_autograd_derivative] Trajectory:    All coordinates close: {test_result_traj}')
+        return test_result_single and test_result_traj
 
     # run tests
-    assert linear_param_test_analytic_derivative_matches_autograd_derivative(action_dim=8, test_sample_size=1000, cpu=True)
+    assert linear_param_test_analytic_derivative_matches_autograd_derivative(state_dim=2, action_dim=8, horizon=10, test_sample_size=1000, cpu=True)

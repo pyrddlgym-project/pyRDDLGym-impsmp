@@ -59,7 +59,7 @@
   "policy": {
     "type": "multivar_normal_with_linear_parametrization",
     "params": {
-        "compute_jacobians_analytically": true
+        "compute_jacobians_analytically": true,
         "cov_lower_cap": 0.05
     }
   },
@@ -80,7 +80,7 @@
           "step_size_distribution": {
             "type": "constant",
             "params": {
-              "value": 0.1
+              "value": 0.05
             }
           },
           "init_strategy": {
