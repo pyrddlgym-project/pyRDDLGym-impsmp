@@ -10,23 +10,27 @@ from tensorflow_probability.substrates import jax as tfp
 class MultivarNormalHKParametrization:
     """Interface for the policy pi_theta parametrized as a
     multivariable normal distribution N(m, Sigma) with vector
-    of means m and diagonal covariance matrix Sigma.
+    of means m and diagonal covariance matrix Sigma. Here
+
+               m = m(s) and Sigma = Sigma(s)
+
+    are functions of the environment state.
+
+    Different functions can be used for implementing the
+    state-dependence of the policy (e.g. linear, MLP, ...).
+    The functions below are implemented using the dm-haiku library.
+    The dm-haiku library stores the parameters theta structured as a
+    nested dictionary, with each layer getting a separate key.
+    For linear layers, the weights and biases are themselves stored
+    in a dictionary with separate keys for the weights and the biases.
+    This nested dictionary structure is a special case of a PyTree.
+    To work with theta, it is often necessary to make use of the
+    jax.tree_util module.
 
     Constraints can be enforced using a smooth bijection called
     a bijector (see also bijectors in tensorflow_probability).
     If there are no constraints, the identity map can be used
     as the bijector.
-
-    Different parameterizations of the policy are possible
-    (e.g. linear, MLP, ...). The parametrizations below are
-    implemented using the dm-haiku library. The dm-haiku library
-    stores the parameters theta structured as a nested dictionary,
-    with each layer getting a separate key. For linear layers, the
-    weights and biases are themselves stored in a dictionary with
-    separate keys for the weights and the biases. This nested
-    dictionary structure is a special case of a PyTree. To work with
-    theta, it is often necessary to make use of the jax.tree_util
-    module.
     """
     def __init__(self,
                  key,
@@ -40,10 +44,10 @@ class MultivarNormalHKParametrization:
         self.bijector = bijector
 
         if compute_jacobians_analytically:
-            self.diagonal_of_jacobian = self.analytic_diagonal_of_jacobian
+            self.diagonal_of_jacobian      = self.analytic_diagonal_of_jacobian
             self.diagonal_of_jacobian_traj = self.analytic_diagonal_of_jacobian_traj
         else:
-            self.diagonal_of_jacobian = self.autodiff_diagonal_of_jacobian
+            self.diagonal_of_jacobian      = self.autodiff_diagonal_of_jacobian
             self.diagonal_of_jacobian_traj = self.autodiff_diagonal_of_jacobian_traj
 
 

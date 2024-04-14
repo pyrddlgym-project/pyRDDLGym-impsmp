@@ -38,7 +38,7 @@ model_lookup_table = {
 #    'inflow_calibration_grid_3x3': pyRDDLGym.Examples.Traffic.Calibration.instances.inflow_calibration_models.InflowCalibration3x3GridModel,
 #    'inflow_calibration_grid_4x4': pyRDDLGym.Examples.Traffic.Calibration.instances.inflow_calibration_models.InflowCalibration4x4GridModel,
 #    'inflow_calibration_grid_6x6': pyRDDLGym.Examples.Traffic.Calibration.instances.inflow_calibration_models.InflowCalibration6x6GridModel,
-    'sum_of_half_spaces': pyRDDLGym_impsmp.models.sum_of_half_spaces.model.SumOfHalfSpacesModel,
+    'sum_of_half_spaces': pyRDDLGym_impsmp.models.rddl.sum_of_half_spaces.model.SumOfHalfSpacesModel,
 }
 
 optimizer_lookup_table = {

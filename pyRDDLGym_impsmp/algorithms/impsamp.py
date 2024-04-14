@@ -3,8 +3,9 @@
 NOTE: This particular implementation does not split the
 densities into positive and negative parts. It also does
 not do subsampling. This implementation is mostly useful
-as a working simplest version of the algorithm. For good
-results, please see
+as a working simplest version of the algorithm.
+
+For better-performing implementations, please see
 
              "impsamp_signed_density"
                        or
@@ -23,12 +24,12 @@ from time import perf_counter as timer
 def unnormalized_instr_density_vector(key, policy, model, theta, init_model_states, actions):
     """The instrumental density for parameter i is defined as
 
-        rho_i = | \tilde{R(tau_i)} * (\partial \pi / \partial \theta_i) (tau_i, theta) |
+    rho_i = | \tilde{R(tau_i)} * (\partial \pi / \partial \theta_i) (tau_i, theta) |
 
     Where \tilde R denotes the cumulative reward over trajectory tau_i
-    in the light model, and pi denotes the parametrized policy with parameters
-    theta. Please note that each parameter theta_i has its own sample trajectory
-    (denoted by tau_i).
+    in the sampling model, and pi denotes the parametrized policy with
+    parameters theta. Please note that each parameter theta_i has its
+    own sample trajectory (denoted by tau_i).
 
     Args:
         key: jax.random.PRNGKey
@@ -45,7 +46,8 @@ def unnormalized_instr_density_vector(key, policy, model, theta, init_model_stat
             The policy number of parameters is denoted by n_params
         init_model_states: jnp.array shape=(n_params, state_dim)
         actions: jnp.array shape=(n_params, horizon, action_dim)
-            For each parameter, the initial state and a trajectory of actions
+            For each parameter, the initial state and a trajectory of
+            actions
 
     Returns:
         jnp.array shape=(n_params,)
@@ -71,9 +73,9 @@ def unnormalized_log_instr_density_vector(key, policy, model, theta, init_state,
     return jnp.log(density_vector)
 
 
-@functools.partial(jax.jit, static_argnames=('epsilon', 'policy', 'light_model', 'train_model', 'Z_est_sample_size'))
+@functools.partial(jax.jit, static_argnames=('epsilon', 'policy', 'sampling_model', 'train_model', 'Z_est_sample_size'))
 def compute_impsamp_dJ_hat_estimate(
-    key, epsilon, policy, light_model, train_model, Z_est_sample_size,
+    key, epsilon, policy, sampling_model, train_model, Z_est_sample_size,
     theta, init_model_states, actions):
     """Given a sample of initial states and actions, computes the Importance Sampling
     estimate of dJ using the formula
@@ -87,18 +89,21 @@ def compute_impsamp_dJ_hat_estimate(
             Small number to avoid division by zero
         policy:
             Class carrying static policy parameters
-        light_model:
+        sampling_model:
         train_model:
             Interfaces to the light and training environment model
         Z_est_sample_size: Int
             Number of samples to draw for estimating the partition functions
         theta: Dict
-            Policy parameters (Dynamic, therefore passed separately from the policy class;
-            the static and dynamic parameters are split to enable JIT compilation.)
+            Policy parameters
+            (Dynamic, therefore passed separately from the policy class;
+            the static and dynamic parameters are split to enable JIT
+            compilation.)
             The policy number of parameters is denoted by n_params
         init_model_states: jnp.array shape=(batch_size, n_chains, n_params, state_dim)
         actions: jnp.array shape=(batch_size, n_chains, n_params, horizon, action_dim)
-            For each sample, chain, parameter, the initial state and a trajectory of actions
+            For each sample, chain, parameter, the initial state and a trajectory
+            of actions
 
     Returns:
         key: jax.random.PRNGKey
@@ -118,7 +123,7 @@ def compute_impsamp_dJ_hat_estimate(
         light_subkeys, train_subkeys = jnp.asarray(subkeys[:P]), jnp.asarray(subkeys[P:])
 
         _, light_s, light_a, light_r = jax.vmap(
-            light_model.evaluate_action_trajectory, (0, 0, 0), (0, 0, 0, 0))(light_subkeys, init_model_states, actions)
+            sampling_model.evaluate_action_trajectory, (0, 0, 0), (0, 0, 0, 0))(light_subkeys, init_model_states, actions)
         light_adv_est = jnp.sum(light_r, axis=1)
         light_dpi = policy.diagonal_of_jacobian_traj(key, theta, light_s, light_a)
 
@@ -139,7 +144,7 @@ def compute_impsamp_dJ_hat_estimate(
     def _compute_Z_estimate_term(key, x):
         init_state = x
 
-        key, states, actions, rewards = light_model.rollout_parametrized_policy(key, init_state, policy.theta)
+        key, states, actions, rewards = sampling_model.rollout_parametrized_policy(key, init_state, policy.theta)
 
         key, *subkeys = jax.random.split(key, num=3)
         pi = policy.pdf_traj(subkeys[0], policy.theta, states[jnp.newaxis, ...], actions[jnp.newaxis, ...])
@@ -156,10 +161,11 @@ def compute_impsamp_dJ_hat_estimate(
     key, Z_terms = jax.lax.scan(_compute_Z_estimate_term, init=key, xs=Z_init_states)
     Zs = jnp.mean(Z_terms, axis=0)
 
-    # normalize the dJ hat estimate using the partition functions,
-    # and convert format back into a dm-haiku tree shape in order
-    # to be useful for updating the parameter vector theta
+    # normalize the dJ hat estimate using the partition functions
     flat_dJ_hat = flat_unnorm_dJ_hat / (Zs + epsilon)
+
+    # convert the format back into a dm-haiku PyTree in order
+    # to be useful for updating the parameter vector theta
     dJ_hat = policy.unflatten_dJ(flat_dJ_hat)
 
     batch_stats = {}
@@ -201,13 +207,13 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
     # B = Sample batch size
     # P = Number of policy parameters
     # T = Horizon
-    # A = Action space dimension
     # S = State space dimension
+    # A = Action space dimension
     B = config['batch_size']
     P = policy.n_params
     T = train_model.horizon
-    A = policy.action_dim
     S = policy.state_dim
+    A = policy.action_dim
 
     eval_batch_size = config['eval_batch_size']
 

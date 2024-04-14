@@ -94,7 +94,7 @@
             "type": "rollout_cur_policy",
             "params": {}
           },
-          "num_leapfrog_steps": 3,
+          "num_leapfrog_steps": 10,
           "burnin_per_chain": 128,
           "num_adaptation_steps": null
         }
