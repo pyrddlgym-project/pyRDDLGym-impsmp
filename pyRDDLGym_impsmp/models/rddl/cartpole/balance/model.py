@@ -37,7 +37,7 @@ def generate_initial_states(key, config, batch_shape):
     return init_states
 
 
-class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
+class RDDLCartpoleBalanceModel(BaseDeterministicModel):
     """A wrapper around the RDDL Sum-of-Half-Spaces environment.
 
     In the Sum-of-Half-Spaces environment, the reward function is given by the

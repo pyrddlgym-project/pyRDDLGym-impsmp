@@ -23,7 +23,6 @@ advantage_estimator_lookup_table = {
 algorithm_lookup_table = {
     'reinforce': pyRDDLGym_impsmp.algorithms.reinforce.reinforce,
     'impsamp': pyRDDLGym_impsmp.algorithms.impsamp.impsamp,
-#    'impsmp_per_parameter': pyRDDLGym_impsmp.algorithms.impsmp_per_parameter.impsmp_per_parameter,
 #    'impsmp_per_parameter_signed': pyRDDLGym_impsmp.algorithms.impsmp_per_parameter_signed.impsmp_per_parameter_signed,
 }
 
@@ -33,12 +32,10 @@ bijector_lookup_table = {
 }
 
 model_lookup_table = {
-#    'inflow_calibration': pyRDDLGym.Examples.Traffic.Calibration.instances.inflow_calibration_models.InflowCalibrationModel,
-#    'inflow_calibration_grid_2x2': pyRDDLGym.Examples.Traffic.Calibration.instances.inflow_calibration_models.InflowCalibration2x2GridModel,
-#    'inflow_calibration_grid_3x3': pyRDDLGym.Examples.Traffic.Calibration.instances.inflow_calibration_models.InflowCalibration3x3GridModel,
-#    'inflow_calibration_grid_4x4': pyRDDLGym.Examples.Traffic.Calibration.instances.inflow_calibration_models.InflowCalibration4x4GridModel,
-#    'inflow_calibration_grid_6x6': pyRDDLGym.Examples.Traffic.Calibration.instances.inflow_calibration_models.InflowCalibration6x6GridModel,
-    'sum_of_half_spaces': pyRDDLGym_impsmp.models.rddl.sum_of_half_spaces.model.SumOfHalfSpacesModel,
+    'rddl_sum_of_half_spaces': pyRDDLGym_impsmp.models.rddl.sum_of_half_spaces.model.RDDLSumOfHalfSpacesModel,
+    'rddl_cartpole_balance': pyRDDLGym_impsmp.models.rddl.cartpole.balance.model.RDDLCartpoleBalanceModel,
+    'mujoco_cartpole_balance': pyRDDLGym_impsmp.models.mujoco.cartpole.balance.model.MuJoCoCartpoleBalanceModel,
+#    'rddl_inflow_calibration': pyRDDLGym.Examples.Traffic.Calibration.instances.inflow_calibration_models.InflowCalibrationModel,
 }
 
 optimizer_lookup_table = {
