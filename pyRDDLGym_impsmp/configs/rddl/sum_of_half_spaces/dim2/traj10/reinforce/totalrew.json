@@ -5,9 +5,9 @@
   "seed": 3264,
   "state_dim": 2,
   "action_dim": 2,
-  "n_iters": 100,
+  "n_iters": 50,
   "models": {
-    "type": "sum_of_half_spaces",
+    "type": "rddl_sum_of_half_spaces",
     "params": {
       "n_summands": 10,
       "instance_idx": 0,
@@ -50,18 +50,8 @@
     }
   },
   "adv_estimator": {
-    "type": "TD_residual",
-    "params": {
-      "gamma": 0.9,
-      "num_hidden_nodes_V": [32, 32],
-      "grad_clip_val": 1.0,
-      "optimizer": {
-        "type": "adam",
-        "params": {
-          "learning_rate": 1e-2
-        }
-      }
-    }
+    "type": "total_traj_reward",
+    "params": {}
   },
   "optimizer": {
     "type": "adabelief",

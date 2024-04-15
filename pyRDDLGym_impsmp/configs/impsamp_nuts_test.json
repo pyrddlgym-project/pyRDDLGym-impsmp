@@ -7,7 +7,7 @@
   "action_dim": 2,
   "n_iters": 250,
   "models": {
-    "type": "sum_of_half_spaces",
+    "type": "rddl_sum_of_half_spaces",
     "params": {
       "n_summands": 10,
       "instance_idx": 0,

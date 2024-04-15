@@ -73,18 +73,12 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, epsilon, policy, m
     dJ_hat = jax.tree_util.tree_map(lambda term: jnp.mean(term, axis=(0,1)), dJ_summands)
 
     batch_stats = {}
-    #batch_stats['dJ'] = flatten_dJ(dJ_summands, batch_size, policy.n_params)
-    #batch_stats['actions'] = actions.reshape(batch_size, policy.action_dim)
-
     return key, dJ_hat, adv_estimator_state, batch_stats
 
 @functools.partial(jax.jit, static_argnames=('eval_batch_size', 'policy', 'model'))
 def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
     key, init_states = model.batch_generate_initial_state(key, (eval_batch_size, model.state_dim))
-    key, *subkeys = jax.random.split(key, num=eval_batch_size+1)
-    subkeys = jnp.asarray(subkeys)
-    _, states, actions, rewards = jax.vmap(
-        model.rollout_parametrized_policy, (0, 0, None), (0, 0, 0, 0))(subkeys, init_states, theta)
+    key, states, actions, rewards = model.rollout_parametrized_policy_batched(key, init_states, theta)
     rewards = jnp.sum(rewards, axis=1) # sum rewards along the time axis
     key, subkey = jax.random.split(key)
     policy_mean, policy_cov = policy.apply(subkey, theta, states)

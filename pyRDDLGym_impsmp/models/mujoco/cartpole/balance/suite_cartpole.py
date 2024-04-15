@@ -17,6 +17,8 @@ while not time_step.last():
                                action_spec.maximum,
                                size=action_spec.shape)
     time_step = env.step(action)
+    print(time_step)
+    exit()
     if len(frames) < env.physics.data.time * framerate:
         pixels = env.physics.render()
         frames.append(pixels)
@@ -41,8 +43,6 @@ def display_video(frames, framerate=30):
     anim = matplotlib.animation.FuncAnimation(fig=fig, func=update, frames=frames,
                                               interval=interval, blit=True, repeat=False)
     return anim
-
-
 
 anim = display_video(frames, framerate)
 anim.save('/tmp/cartpole.gif', fps=framerate)
