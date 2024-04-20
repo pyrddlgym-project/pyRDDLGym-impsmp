@@ -105,7 +105,10 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
 
 
         # initialize the RDDL environment
-        self.rddl_env = pyRDDLGym.make('Cartpole_Continuous_gym', '0')
+        self.domain_def_file_path = os.path.join(this_dir, 'domain.rddl')
+        self.instance_def_file_path = os.path.join(this_dir, 'instance0.rddl')
+        self.rddl_env = pyRDDLGym.RDDLEnv(domain=self.domain_def_file_path,
+                                          instance=self.instance_def_file_path)
 
         self.model = self.rddl_env.model
         self.horizon = self.rddl_env.horizon
