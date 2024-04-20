@@ -1,21 +1,22 @@
-non-fluents cart_pole_con_0 {
-    domain = cart_pole_continuous;
+non-fluents cartpole_balance_dense_0 {
+    domain = cartpole_balance_dense;
 }
 
-instance inst_cart_pole_con_0 {
+instance inst_cartpole_balance_dense_0 {
 
-	domain = cart_pole_continuous;
+	domain = cartpole_balance_dense;
 
-	non-fluents = cart_pole_con_0;
+	non-fluents = cartpole_balance_dense_0;
 
 	init-state {
 	    pos = 0.0;
         vel = 0.0;
-        ang-pos = 0.1;
+        ang-cos = 0.99500416527; //cos(0.1 rad)
+        ang-sin = 0.09983341664; //sin(0.1 rad)
         ang-vel = 0.0;
 	};
 
-	max-nondef-actions = pos-inf;
+	max-nondef-actions = 1;
 	horizon  = 200;
 	discount = 1.0;
 }

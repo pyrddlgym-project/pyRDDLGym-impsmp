@@ -12,16 +12,16 @@
 //
 // References: 
 //
-// 		Barto, Andrew G., Richard S. Sutton, and Charles W. Anderson. 
-// 		"Neuronlike adaptive elements that can solve difficult learning
-// 		control problems." IEEE transactions on systems, man, and 
-// 		cybernetics 5 (1983): 834-846.
+//    Barto, Andrew G., Richard S. Sutton, and Charles W. Anderson. 
+//    "Neuronlike adaptive elements that can solve difficult learning
+//    control problems." IEEE transactions on systems, man, and 
+//    cybernetics 5 (1983): 834-846.
 //
 // Author(s): 
 //		Mike Gimelfarb (mgimelfarb@yahoo.ca)
 //
 ////////////////////////////////////////////////////////////////////
-domain cart_pole_continuous {
+domain cartpole_balance_dense {
 
     requirements = {
         reward-deterministic
@@ -29,61 +29,64 @@ domain cart_pole_continuous {
 
     pvariables {
 
-    	// forces
+        //forces
 		GRAVITY   : { non-fluent, real, default = 9.8 };        // force of gravity acting down
 		FORCE-MAX : { non-fluent, real, default = 10.0 };		// max force applied to the side of the cart
 
 		// cart and pole properties
 		CART-MASS : { non-fluent, real, default = 1.0 };        // mass of the cart
 		POLE-MASS : { non-fluent, real, default = 0.1 };		// mass of the pole
-		POLE-LEN  : { non-fluent, real, default = 0.5 }; 		// half of the pole length
+		POLE-LEN  : { non-fluent, real, default = 0.5 };        // half of the pole length
 		
 		// other constants
-		TIME-STEP : { non-fluent, real, default = 0.02 }; 		// seconds between state updates
-//		POS-LIMIT : { non-fluent, real, default = 2.4 };		// limit of cart position
-//		ANG-LIMIT : { non-fluent, real, default = 0.2094395 };	// limit of pole angle
+		TIME-STEP : { non-fluent, real, default = 0.02 };       // seconds between state updates
 		POS-LIMIT : { non-fluent, real, default = 2.4 };		// limit of cart position
-		ANG-LIMIT : { non-fluent, real, default = 200.0 };	// limit of pole angle
+		ANG-LIMIT : { non-fluent, real, default = 200.0 };	    // limit of pole angle
 	
 		// interm & derived fluents
-		temp : { interm-fluent, real };						// temporary variable
+		temp : { interm-fluent, real };						    // temporary variable
 		acc : { interm-fluent, real };							// position acceleration
+        ang	: { state-fluent, real, default = 0 };              // pole angle
 		ang-acc : { interm-fluent, real };						// angular acceleration
 
 		// states
-       	pos    	: { state-fluent, real, default = 0 };          // cart position
-       	ang-pos	: { state-fluent, real, default = 0 };          // pole angle
-       	vel   	: { state-fluent, real, default = 0 };          // cart velocity
-       	ang-vel : { state-fluent, real, default = 0 };          // pole angular velocity
+        pos     : { state-fluent, real, default = 0 };          // cart position
+        vel     : { state-fluent, real, default = 0 };          // cart velocity
+        ang-sin : { state-fluent, real, default = 0 };          // sine of pole angle
+        ang-cos : { state-fluent, real, default = 0 };          // cosine of pole angle
+        ang-vel : { state-fluent, real, default = 0 };          // pole angular velocity
 
-       	// actions
-       	force : { action-fluent, real, default = 0 };      	// how much force to apply to the side of the cart
+        // actions
+        force : { action-fluent, real, default = 0 };           // how much force to apply to the side of the cart
     };
 
     cpfs {
 		
 		// compute the pole angular acceleration
-		temp = (force + POLE-LEN * POLE-MASS * pow[ang-vel, 2] * sin[ang-pos]) / (CART-MASS + POLE-MASS);
-		ang-acc = (GRAVITY * sin[ang-pos] - cos[ang-pos] * temp) / (
-            POLE-LEN * ((4.0 / 3.0) - (POLE-MASS * pow[cos[ang-pos], 2] / (CART-MASS + POLE-MASS))));
+		temp = (force + POLE-LEN * POLE-MASS * ang-vel * ang-vel * ang-sin) / (CART-MASS + POLE-MASS);
+		ang-acc = (GRAVITY * ang-sin - ang-cos * temp) / (
+            POLE-LEN * (1.3333333333 - (POLE-MASS * ang-cos * ang-cos / (CART-MASS + POLE-MASS))));
 		
 		// compute the cart acceleration
-		acc = temp - (POLE-LEN * POLE-MASS * ang-acc * cos[ang-pos] / (CART-MASS + POLE-MASS));
+		acc = temp - (POLE-LEN * POLE-MASS * ang-acc * ang-cos / (CART-MASS + POLE-MASS));
 
-		// Euler integration formula
+		// Euler's method
 		pos' = pos + TIME-STEP * vel;
-		ang-pos' = ang-pos + TIME-STEP * ang-vel;
+		ang' = ang + TIME-STEP * ang-vel;
 		vel' = vel + TIME-STEP * acc;
 		ang-vel' = ang-vel + TIME-STEP * ang-acc;
+
+        ang-sin' = sin[ang'];
+        ang-cos' = cos[ang'];
     };
 
     // R = 1 as long as the pole is upright and the cart is not out of bounds
-    reward = if (pos < -POS-LIMIT | pos > POS-LIMIT | ang-pos < -ANG-LIMIT | ang-pos > ANG-LIMIT) 
+    reward = if (pos < -POS-LIMIT | pos > POS-LIMIT | ang < -ANG-LIMIT | ang > ANG-LIMIT) 
 				then 0 else 1;
 
     termination {
 		pos < -POS-LIMIT | pos > POS-LIMIT;
-		ang-pos < -ANG-LIMIT | ang-pos > ANG-LIMIT;
+		ang < -ANG-LIMIT | ang > ANG-LIMIT;
     };
 
     state-invariants {
@@ -91,8 +94,8 @@ domain cart_pole_continuous {
 		// state is within limits
 		pos >= -POS-LIMIT;
 		pos <= POS-LIMIT;
-		ang-pos >= -ANG-LIMIT;
-		ang-pos <= ANG-LIMIT;
+		ang >= -ANG-LIMIT;
+		ang <= ANG-LIMIT;
 		
 		// system is physically plausible
 		GRAVITY >= 0 ^ FORCE-MAX >= 0;
