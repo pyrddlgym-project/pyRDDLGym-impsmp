@@ -1,9 +1,8 @@
 """Implementation of REINFORCE with Importance Sampling.
 
-NOTE: This particular implementation does not split the
-densities into positive and negative parts. It also does
-not do subsampling. This implementation is mostly useful
-as a working simplest version of the algorithm.
+NOTE: This particular implementation does not split the densities into positive
+and negative parts. It also does not do subsampling. This implementation is
+mostly useful as a working simplest version of the algorithm.
 
 For better-performing implementations, please see
 
@@ -11,10 +10,10 @@ For better-performing implementations, please see
                        or
              "impsamp_split_by_sign"
 """
-import numpy as np
 import jax
 import jax.numpy as jnp
 import optax
+import numpy as np
 import functools
 from time import perf_counter as timer
 
@@ -55,7 +54,8 @@ def unnormalized_instr_density_vector(key, policy, model, theta, init_model_stat
         where N=n_params
     """
     # evaluate tau_i for parameter i in batch in i
-    key, states, actions, rewards = model.evaluate_action_trajectory_batched(key, init_model_states, actions)
+    key, states, actions, rewards = model.evaluate_action_trajectory_batched(
+        key, init_model_states, actions)
     dpi = policy.diagonal_of_jacobian_traj(key, theta, states, actions)
     adv = jnp.sum(rewards, axis=1) #advantage estimate
     density_vector = jnp.abs(adv * dpi)
@@ -115,11 +115,13 @@ def compute_impsamp_dJ_hat_estimate(
     def _compute_unnorm_dJ_term(key, x):
         init_model_states, actions = x
 
-        key, light_s, light_a, light_r = sampling_model.evaluate_action_trajectory_batched(key, init_model_states, actions)
+        key, light_s, light_a, light_r = sampling_model.evaluate_action_trajectory_batched(
+            key, init_model_states, actions)
         light_adv_est = jnp.sum(light_r, axis=1)
         light_dpi = policy.diagonal_of_jacobian_traj(key, theta, light_s, light_a)
 
-        key, train_s, train_a, train_r = train_model.evaluate_action_trajectory_batched(key, init_model_states, actions)
+        key, train_s, train_a, train_r = train_model.evaluate_action_trajectory_batched(
+            key, init_model_states, actions)
         train_adv_est = jnp.sum(train_r, axis=1)
         train_dpi = policy.diagonal_of_jacobian_traj(key, theta, train_s, train_a)
 
@@ -166,12 +168,14 @@ def compute_impsamp_dJ_hat_estimate(
 @functools.partial(jax.jit, static_argnames=('eval_batch_size', 'policy', 'model'))
 def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
     key, init_model_states = model.batch_generate_initial_state(key, (eval_batch_size, model.state_dim))
-    key, states, actions, rewards = model.rollout_parametrized_policy_batched(key, init_model_states, theta)
+    key, states, actions, rewards = model.rollout_parametrized_policy_batched(
+        key, init_model_states, theta)
     rewards = jnp.sum(rewards, axis=1) # sum rewards along the time axis
 
     algo_stats['reward_mean']  = algo_stats['reward_mean'].at[it].set(jnp.mean(rewards))
     algo_stats['reward_std']   = algo_stats['reward_std'].at[it].set(jnp.std(rewards))
-    algo_stats['reward_sterr'] = algo_stats['reward_sterr'].at[it].set(algo_stats['reward_std'][it] / jnp.sqrt(eval_batch_size))
+    algo_stats['reward_sterr'] = algo_stats['reward_sterr'].at[it].set(
+        algo_stats['reward_std'][it] / jnp.sqrt(eval_batch_size))
     return key, algo_stats
 
 def print_impsamp_report(it, algo_stats, sampler, subt0, subt1):
@@ -256,7 +260,8 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
                            step_size=sampler_step_size)
 
         try:
-            key, (init_model_states, actions), accepted_matrix = sampler.sample(key, policy.theta, init_model_states, sampler_step_size, sampler_init_states)
+            key, (init_model_states, actions), accepted_matrix = sampler.sample(
+                key, policy.theta, init_model_states, sampler_step_size, sampler_init_states)
         except FloatingPointError as e:
             warnings.warn(f'[impsamp] Iteration {it}. Caught FloatingPointError exception during sampling')
             break

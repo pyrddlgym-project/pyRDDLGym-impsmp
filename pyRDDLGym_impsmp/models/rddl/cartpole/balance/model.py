@@ -1,4 +1,4 @@
-"""Interface to RDDL SumOfHalfSpaces toy models for quick iteration of experiments"""
+"""Interface to the RDDL CartPole models"""
 import jax.numpy as jnp
 import jax.random
 import os
@@ -96,39 +96,22 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
     """
     def __init__(self,
                  key,
+                 state_dim,
                  action_dim,
-                 n_summands,
-                 instance_idx,
                  is_relaxed,
                  initial_state_config,
                  reward_shift,
                  compiler_kwargs):
-        # check that the requested directory and file exist
-        domain_def_file_path = os.path.join(this_dir, 'domain.rddl')
-        instance_dir_path = os.path.join(this_dir, 'instances', f'dim{action_dim}_sum{n_summands}')
-        if not os.path.isdir(instance_dir_path):
-            raise RuntimeError(
-                f'[SumOfHalfSpacesModel] Please check that the directory'
-                f' {instance_dir_path} exists.')
-        instance_file_path = os.path.join(instance_dir_path, f'instance{instance_idx}.rddl')
-        if not os.path.isfile(instance_file_path):
-            raise RuntimeError(
-                f'[SumOfHalfSpacesModel] Please check that the instance file'
-                f' instance{instance_idx}.rddl has been generated in {instance_dir_path}')
-
-        self.domain_def_file_path = domain_def_file_path
-        self.instance_file_path = instance_file_path
 
 
         # initialize the RDDL environment
-        self.rddl_env = pyRDDLGym.RDDLEnv(domain=self.domain_def_file_path,
-                                          instance=self.instance_file_path)
+        self.rddl_env = pyRDDLGym.make('Cartpole_Continuous_gym', '0')
 
         self.model = self.rddl_env.model
         self.horizon = self.rddl_env.horizon
-        self.state_dim = action_dim # True for SumOfHalfSpaces
+
+        self.state_dim = state_dim
         self.action_dim = action_dim
-        self.n_summands = n_summands
         assert self.action_dim == self.rddl_env.max_allowed_actions
 
         # compile rollouts
@@ -140,6 +123,12 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
         assert initial_state_config['type'] in VALID_INITIALIZATION_STRATEGIES
         self.initial_state_config = initial_state_config
         self.reward_shift_val = reward_shift
+
+        print(self.rddl_env.observation_space)
+        print(self.rddl_env.action_space)
+
+        exit()
+        #@@@ edited up to here
 
 
     def compile(self, compiler_kwargs):
@@ -323,7 +312,8 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
         key, *subkeys = jax.random.split(key, num=B+1)
         subkeys = jnp.asarray(subkeys)
         _, batch_states, batch_actions, batch_rewards = jax.vmap(
-            self.rollout_parametrized_policy, (0, 0, None, None), (0, 0, 0, 0))(subkeys, batch_init_states, theta, shift_reward)
+            self.rollout_parametrized_policy, (0, 0, None, None), (0, 0, 0, 0))(
+                subkeys, batch_init_states, theta, shift_reward)
         return key, batch_states, batch_actions, batch_rewards
 
     def evaluate_action_trajectory(self, key, init_state, actions, shift_reward=False):
@@ -396,5 +386,6 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
         key, *subkeys = jax.random.split(key, num=B+1)
         subkeys = jnp.asarray(subkeys)
         _, batch_states, batch_actions, batch_rewards = jax.vmap(
-            self.evaluate_action_trajectory, (0, 0, 0, None), (0, 0, 0, 0))(subkeys, batch_init_states, batch_actions, shift_reward)
+            self.evaluate_action_trajectory, (0, 0, 0, None), (0, 0, 0, 0))(
+                subkeys, batch_init_states, batch_actions, shift_reward)
         return key, batch_states, batch_actions, batch_rewards

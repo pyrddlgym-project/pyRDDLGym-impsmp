@@ -43,9 +43,8 @@ def main(config):
     jax.config.update('jax_enable_x64', use64bit)
     jax.config.update('jax_debug_nans', debug_nans)
 
-    jnp.set_printoptions(
-        linewidth=9999,
-        formatter={'float': lambda x: "{0:0.3f}".format(x)})
+    jnp.set_printoptions(linewidth=jnp.inf,
+                         formatter={'float': lambda x: "{0:0.3f}".format(x)})
 
     # initialize master random generator key
     seed = config.get('seed', 3264)
@@ -86,6 +85,7 @@ def main(config):
         spec.update(model_params)
         models[model_key] = model_cls(
             key=subkey,
+            state_dim=state_dim,
             action_dim=action_dim,
             **spec)
 

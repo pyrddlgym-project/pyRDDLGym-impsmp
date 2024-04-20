@@ -11,19 +11,25 @@ time_step = env.reset()
 framerate = 30
 
 frames = []
-
 while not time_step.last():
     action = np.random.uniform(action_spec.minimum,
                                action_spec.maximum,
                                size=action_spec.shape)
     time_step = env.step(action)
-    print(time_step)
+
+    print('cart position=', env.physics.cart_position())
+    print('angular_vel=', env.physics.angular_vel())
+    print('pole_angle_cos=', env.physics.pole_angle_cosine())
+    print('bounded_pos=', env.physics.bounded_position())
+
+    print(time_step.observation)
     exit()
+
     if len(frames) < env.physics.data.time * framerate:
         pixels = env.physics.render()
         frames.append(pixels)
 
-
+exit()
 
 def display_video(frames, framerate=30):
     height, width, _ = frames[0].shape
