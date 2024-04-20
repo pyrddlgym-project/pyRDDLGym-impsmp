@@ -1,0 +1,110 @@
+/////////////////////////////////////////////////////////////////////////////////////////////////
+// Classical cart-pole `balance` control task with dense rewards.
+// 
+// The goal is to push a cart on a flat track left or right by applying
+// a force to the side of the cart, to balance a pole on top of the cart.
+// The dense reward 
+//
+// References: 
+//
+//    Barto, Andrew G., Richard S. Sutton, and Charles W. Anderson. 
+//    "Neuronlike adaptive elements that can solve difficult learning
+//    control problems." IEEE transactions on systems, man, and 
+//    cybernetics 5 (1983): 834-846.
+//
+//    The reward is based on the dense reward in the CartPole Balance
+//    task in the MuJoCo-based dm_control benchmark suite:
+//        https://github.com/google-deepmind/dm_control/blob/main/dm_control/suite/cartpole.py
+//
+// Author(s): 
+//		Mike Gimelfarb (mgimelfarb@yahoo.ca)
+//      Modified for dense reward by Ilia Smirnov (iliathesmirnov@gmail.com)
+//
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+domain cartpole_balance_dense_euler {
+
+    requirements = {
+        reward-deterministic
+    };
+
+    pvariables {
+        //forces
+		G         : { non-fluent, real, default = 9.81 };       // force of gravity acting down
+		FORCE-MAX : { non-fluent, real, default = 1.0  };       // max force applied to the side of the cart
+
+		// cart and pole properties
+		CART-MASS : { non-fluent, real, default = 1.0 };        // mass of the cart
+        CART-FRIC : { non-fluent, real, default = 0.00005 };     // coefficient of friction of cart on track
+		POLE-MASS : { non-fluent, real, default = 0.1 };        // mass of the pole
+		POLE-LEN  : { non-fluent, real, default = 0.5 };        // half of the pole length
+        POLE-FRIC : { non-fluent, real, default = 0.000002 };   // coefficient of friction of pole on cart
+
+		// other constants
+		TIME-STEP : { non-fluent, real, default = 0.01 };       // seconds between state updates
+		POS-LIMIT : { non-fluent, real, default = 1.7  };       // limit of cart position (measured from centre)
+	
+		// interm & derived fluents
+        ang	      : { state-fluent, real, default = 0.0 };      // pole angle
+		acc       : { interm-fluent, real };                    // position acceleration
+		ang-acc   : { interm-fluent, real };                    // angular acceleration
+
+        // interm fluents for reward computation
+        upright    : { interm-fluent, real };                   // how close the pole is to being upright
+        centered   : { interm-fluent, real };                   // how close the cart is to being in the middle of the track
+        small-ctrl : { interm-fluent, real };                   // how close the magnitude of the actuations is to 0
+        small-vel  : { interm-fluent, real };                   // how small the angular velocity of the pole is
+
+		// states
+        ang-sin   : { state-fluent, real, default = 0.0 };      // sine of pole angle
+        ang-cos   : { state-fluent, real, default = 0.0 };      // cosine of pole angle
+        pos       : { state-fluent, real, default = 0.0 };      // cart position
+        vel       : { state-fluent, real, default = 0.0 };      // cart velocity
+        ang-vel   : { state-fluent, real, default = 0.0 };      // pole angular velocity
+
+        // actions
+        force : { action-fluent, real, default = 0.0 };         // how much force to apply to the side of the cart
+    };
+
+    cpfs {
+		// compute the pole angular acceleration
+        ang-acc = (G * ang-sin
+                   + ((-force - POLE-MASS * POLE-LEN * ang-vel * ang-vel * ang-sin + CART-FRIC * sgn[vel]) / (CART-MASS + POLE-MASS)) * ang-cos
+                   - POLE-FRIC * ang-vel / (POLE-MASS * POLE-LEN)) /
+                   (POLE-LEN * (1.333333333333333 - (POLE-MASS * ang-cos * ang-cos) / (CART-MASS + POLE-MASS)));
+        acc = (force + POLE-MASS * POLE-LEN * (ang-vel * ang-vel * ang-sin - ang-acc * ang-cos) - CART-FRIC * sgn[vel]) / (CART-MASS + POLE-MASS);
+
+		// Euler's method
+		pos' = min[max[pos + TIME-STEP * vel + 0.5 * TIME-STEP * TIME-STEP * acc, -POS-LIMIT], POS-LIMIT];
+		ang' = ang + TIME-STEP * ang-vel + 0.5 * TIME-STEP * TIME-STEP * ang-acc;
+        ang-sin' = sin[ang'];
+        ang-cos' = cos[ang'];
+
+		vel' = vel + TIME-STEP * acc;
+		ang-vel' = ang-vel + TIME-STEP * ang-acc;
+
+
+        // compute intermediate fluents for reward
+        // (see also the dense CartPole Balance reward in the dm_control suite)
+        upright = 0.5 * (ang-cos + 1.0);
+        centered = 0.5 * (exp[-0.57564627324 * pos * pos] + 1.0);             // -0.57564627324 = nat.log(0.1) / 2**2
+        small-ctrl = 0.2 * (max[1 - force * force, 0.0] + 4.0);
+        small-vel = 0.5 * (exp[-0.09210340371 * ang-vel * ang-vel] + 1.0);    //-0.09210340371 = nat.log(0.1) / 5**2
+    };
+
+    // Dense reward based on the dm_control version of CartPole Balance
+    reward = upright * centered * small-ctrl * small-vel;
+
+    state-invariants {
+		// system is physically plausible
+		G >= 0 ^ FORCE-MAX >= 0;
+		CART-MASS >= 0 ^ POLE-MASS >= 0 ^ POLE-LEN >= 0;
+		TIME-STEP >= 0 ^ POS-LIMIT >= 0;
+    };
+
+    action-preconditions {
+        force >= -FORCE-MAX;
+		force <= FORCE-MAX;
+    };
+
+}

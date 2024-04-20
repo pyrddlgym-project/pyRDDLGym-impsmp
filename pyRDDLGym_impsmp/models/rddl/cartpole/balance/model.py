@@ -17,9 +17,16 @@ this_dir = os.path.dirname(os.path.abspath(__file__))
 VALID_INITIALIZATION_STRATEGIES = (
     'constant',
     'normal',
-    'uniform'
+    'uniform',
 )
 
+VALID_SOLVERS = (
+    'euler',
+    'adams_bashforth_2step',
+    'adams_bashforth_3step',
+    'adams_bashforth_4step',
+    'adams_bashforth_5step',
+)
 
 def generate_initial_states(key, config, batch_shape):
     """Initializes a batch of policy rollouts"""
@@ -101,14 +108,33 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
                  is_relaxed,
                  initial_state_config,
                  reward_shift,
+                 dense_reward,
+                 solver,
                  compiler_kwargs):
 
 
         # initialize the RDDL environment
-        self.domain_def_file_path = os.path.join(this_dir, 'domain.rddl')
-        self.instance_def_file_path = os.path.join(this_dir, 'instance0.rddl')
-        self.rddl_env = pyRDDLGym.RDDLEnv(domain=self.domain_def_file_path,
-                                          instance=self.instance_def_file_path)
+        if dense_reward:
+            reward_type_dir = 'dense'
+        else:
+            reward_type_dir = 'sparse'
+            raise NotImplementedError('RDDL CartPole Balance sparse reward not yet implemented')
+
+        if solver == 'euler':
+            solver_type_dir = 'euler'
+        elif solver == 'adams_bashforth_2step':
+            solver_type_dir = 'ab2'
+        elif solver == 'adams_bashforth_3step':
+            solver_type_dir = 'ab3'
+        elif solver == 'adams_bashforth_4step':
+            solver_type_dir = 'ab4'
+        elif solver == 'adams_bashforth_5step':
+            solver_type_dir = 'ab5'
+
+        self.domain_def_file_path = os.path.join(this_dir, reward_type_dir, solver_type_dir, 'domain.rddl')
+        self.instance_def_file_path = os.path.join(this_dir, reward_type_dir, solver_type_dir, 'instance0.rddl')
+        self.rddl_env = pyRDDLGym.make(domain=self.domain_def_file_path,
+                                       instance=self.instance_def_file_path)
 
         self.model = self.rddl_env.model
         self.horizon = self.rddl_env.horizon

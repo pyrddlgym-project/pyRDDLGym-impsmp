@@ -1,0 +1,28 @@
+non-fluents cartpole_balance_dense_euler_0 {
+    domain = cartpole_balance_dense_euler;
+}
+
+instance inst_cartpole_balance_dense_euler_0 {
+
+	domain = cartpole_balance_dense_euler;
+
+	non-fluents = cartpole_balance_dense_euler_0;
+
+	init-state {
+        pos = 0.0742;
+        vel = 0.00895;
+        ang = -0.0135992;
+        ang-cos = 0.9999142054;
+        ang-sin = -0.0130989;
+//        ang = 1.0;
+//        ang-cos = 0.99500416527; //cos(0.1 rad)
+//        ang-sin = 0.09983341664; //sin(0.1 rad)
+        ang-vel = 0.00906;
+
+	};
+
+	max-nondef-actions = 1;
+	horizon  = 1000;
+	discount = 1.0;
+}
+
