@@ -48,7 +48,6 @@ domain cartpole_balance_dense_ab2 {
         POS-LIMIT : { non-fluent, real, default = 1.7  };       // limit of cart position (measured from centre)
     
         // interm & derived fluents
-        ang       : { state-fluent, real, default = 0.0 };      // pole angle
         acc       : { interm-fluent, real };                    // position acceleration
         ang-acc   : { interm-fluent, real };                    // angular acceleration
 
@@ -59,6 +58,7 @@ domain cartpole_balance_dense_ab2 {
         small-vel  : { interm-fluent, real };                   // how small the angular velocity of the pole is
 
         // states
+        ang       : { state-fluent, real, default = 0.0 };      // pole angle
         ang-sin   : { state-fluent, real, default = 0.0 };      // sine of pole angle
         ang-cos   : { state-fluent, real, default = 0.0 };      // cosine of pole angle
         pos       : { state-fluent, real, default = 0.0 };      // cart position

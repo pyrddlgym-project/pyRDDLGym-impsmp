@@ -30,19 +30,46 @@ VALID_SOLVERS = (
 def generate_initial_states(key, config, batch_shape, state_dim):
     """Initializes a batch of policy rollouts"""
     if config['type'] == 'dm_control':
-        # generates the initial state consistently with the configuration in dm_control
-        # see also
+        # generates the initial state consistently with the dm_control cartpole balance task
         #     https://github.com/google-deepmind/dm_control/blob/main/dm_control/suite/cartpole.py
         subkeys = jax.random.split(key, num=4)
         cart_pos = jax.random.uniform(subkeys[0], shape=batch_shape, minval=-0.1, maxval=0.1)
         cart_vel = 0.01 * jax.random.normal(subkeys[1], shape=batch_shape)
         pole_ang = jax.random.uniform(subkeys[2], shape=batch_shape, minval=-0.034, maxval=0.034)
-        pole_ang_sin = jnp.sin(pole_ang)
-        pole_ang_cos = jnp.cos(pole_ang)
         pole_ang_vel = 0.01 * jax.random.normal(subkeys[3], shape=batch_shape)
         init_states = jnp.stack([
-            pole_ang_sin, pole_ang_cos, cart_pos, cart_vel, pole_ang_vel], axis=-1)
+            cart_pos, jnp.cos(pole_ang), jnp.sin(pole_ang), cart_vel, pole_ang_vel], axis=-1)
     return init_states
+
+def initialize_solver_state(solver, subs):
+    if solver == 'euler':
+        pass
+    elif solver == 'adams_bashforth_2step':
+        subs['prev-acc']      = np.zeros(1)
+        subs['prev-ang-acc']  = np.zeros(1)
+    elif solver == 'adams_bashforth_3step':
+        subs['prev-acc0']     = np.zeros(1)
+        subs['prev-acc1']     = np.zeros(1)
+        subs['prev-ang-acc0'] = np.zeros(1)
+        subs['prev-ang-acc1'] = np.zeros(1)
+    elif solver == 'adams_bashforth_4step':
+        subs['prev-acc0']     = np.zeros(1)
+        subs['prev-acc1']     = np.zeros(1)
+        subs['prev-acc2']     = np.zeros(1)
+        subs['prev-ang-acc0'] = np.zeros(1)
+        subs['prev-ang-acc1'] = np.zeros(1)
+        subs['prev-ang-acc2'] = np.zeros(1)
+    elif solver == 'adams_bashforth_5step':
+        subs['prev-acc0']     = np.zeros(1)
+        subs['prev-acc1']     = np.zeros(1)
+        subs['prev-acc2']     = np.zeros(1)
+        subs['prev-acc3']     = np.zeros(1)
+        subs['prev-ang-acc0'] = np.zeros(1)
+        subs['prev-ang-acc1'] = np.zeros(1)
+        subs['prev-ang-acc2'] = np.zeros(1)
+        subs['prev-ang-acc3'] = np.zeros(1)
+    return subs
+
 
 
 class RDDLCartpoleBalanceModel(BaseDeterministicModel):
@@ -55,7 +82,7 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
 
     To be consistent with the dm_control version of the CartPole Balance environment,
     the flattened observations are ordered as
-        (ang-sin, ang-cos, pos, vel, ang-vel)
+        (pos, ang-cos, ang-sin, vel, ang-vel)
 
     The RDDL instance files for the RDDLCartPoleBalance environment are pre-generated.
     The reward can be dense or sparse. The solver of the differential equations of
@@ -102,12 +129,14 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
 
 
         # initialize the RDDL environment
+        self.dense_reward = dense_reward
         if dense_reward:
             reward_type_dir = 'dense'
         else:
             reward_type_dir = 'sparse'
             raise NotImplementedError('RDDL CartPole Balance sparse reward not yet implemented')
 
+        self.solver = solver
         if solver == 'euler':
             solver_type_dir = 'euler'
         elif solver == 'adams_bashforth_2step':
@@ -163,8 +192,8 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
         # are sampled using the policy; the policy parameters are
         # passed to the compiled rollouts generator at run-time)
         def parametrized_stochastic_policy(key, policy_params, hyperparams, step, states):
-            states_flat = np.array([states['ang-sin'], states['ang-cos'], states['pos'], states['vel'], states['ang-vel']])
-            return {'force': policy_sample_fn(key, policy_params['theta'], states_flat)}
+            states_flat = jnp.array([states['pos'], states['ang-cos'], states['ang-sin'], states['vel'], states['ang-vel']])
+            return {'force': policy_sample_fn(key, policy_params['theta'], states_flat)[0]}
 
         self.parametrized_policy_rollout_sampler = self.compiler.compile_rollouts(
             policy=parametrized_stochastic_policy,
@@ -175,7 +204,7 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
         # the actions a0, a1, ..., aT are passed in the hyperparams dictionary.
         # the policy simply takes action a_t at step t
         def deterministic_action_traj_policy(key, policy_params, hyperparams, step, states):
-            return {'force': policy_params['force'][step]}
+            return {'force': policy_params['force'][step][0]}
 
         self.action_traj_evaluator = self.compiler.compile_rollouts(
             policy=deterministic_action_traj_policy,
@@ -190,7 +219,6 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
         for (state, next_state) in self.model.next_state.items():
             subs[next_state] = subs[state]
         self.subs = subs
-
 
     def compile_relaxed(self, compiler_kwargs):
         """Compiles batched rollouts in the relaxed RDDL model.
@@ -217,8 +245,8 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
         # are sampled using the policy; the policy parameters are
         # passed to the compiled rollouts generator at run-time)
         def parametrized_stochastic_policy(key, policy_params, hyperparams, step, states):
-            states_flat = np.array([states['ang-sin'], states['ang-cos'], states['pos'], states['vel'], states['ang-vel']])
-            return {'force': policy_sample_fn(key, policy_params['theta'], states_flat)}
+            states_flat = jnp.array([states['pos'], states['ang-cos'], states['ang-sin'], states['vel'], states['ang-vel']])
+            return {'force': policy_sample_fn(key, policy_params['theta'], states_flat)[0]}
 
         self.parametrized_policy_rollout_sampler = self.compiler.compile_rollouts(
             policy=parametrized_stochastic_policy,
@@ -229,7 +257,7 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
         # the actions a0, a1, ..., aT are passed in the hyperparams dictionary.
         # the policy simply takes action a_t at step t
         def deterministic_action_traj_policy(key, policy_params, hyperparams, step, states):
-            return {'force': policy_params['force'][step]}
+            return {'force': policy_params['force'][step][0]}
 
         self.action_traj_evaluator = self.compiler.compile_rollouts(
             policy=deterministic_action_traj_policy,
@@ -253,16 +281,15 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
         """
         key, subkey = jax.random.split(key)
         init_states = generate_initial_states(subkey, self.initial_state_config, batch_shape, self.state_dim)
-        print(batch_shape)
         return key, init_states
 
-    def rollout_parametrized_policy(self, key, init_states, theta, shift_reward=False):
+    def rollout_parametrized_policy(self, key, init_state, theta, shift_reward=False):
         """Rolls out the policy with parameters theta.
 
         Args:
             key: jax.random.PRNGKey
                 Random key
-            init_states: jnp.array shape=(state_dim,)
+            init_state: jnp.array shape=(state_dim,)
                 Initial state
             theta: PyTree
                 Current policy parameters
@@ -278,8 +305,13 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
             rewards: jnp.array shape=(horizon,)
                 Sampled trajectory
         """
-        print(self.subs.keys()); exit()
-        self.subs['s'] = init_states[jnp.newaxis, :]
+        self.subs = initialize_solver_state(self.solver, self.subs)
+        self.subs['pos']     = init_state[0:1]
+        self.subs['ang']     = jnp.atan(init_state[2:3] / init_state[1:2])
+        self.subs['ang-cos'] = init_state[1:2]
+        self.subs['ang-sin'] = init_state[2:3]
+        self.subs['vel']     = init_state[3:4]
+        self.subs['ang-vel'] = init_state[4:5]
 
         key, subkey = jax.random.split(key)
         rollouts = self.parametrized_policy_rollout_sampler(
@@ -291,12 +323,14 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
 
         # add the initial state and remove the final state
         # from the trajectory of states generated during the rollout
-        truncated_state_traj = rollouts['pvar']['s'][0, :-1]
-        states = jnp.concatenate([init_states[jnp.newaxis, :], truncated_state_traj], axis=0)
-        actions = rollouts['action']['a'][0]
+        new_subs = rollouts['pvar']
+        truncated_state_traj = jnp.stack([
+            new_subs['pos'][0, :-1], new_subs['ang-cos'][0, :-1], new_subs['ang-sin'][0, :-1],
+            new_subs['vel'][0, :-1], new_subs['ang-vel'][0, :-1]], axis=1)
+        states = jnp.concatenate([init_state[jnp.newaxis, :], truncated_state_traj], axis=0)
+        actions = rollouts['action']['force'][0, :, jnp.newaxis]
         # shift rewards if required
         rewards = rollouts['reward'][0] + shift_reward * self.reward_shift_val
-
         return key, states, actions, rewards
 
     def rollout_parametrized_policy_batched(self, key, batch_init_states, theta, shift_reward=False):
@@ -353,18 +387,29 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
             rewards: jnp.array shape=(horizon,)
                 The trajectory
         """
-        self.subs['s'] = init_state[jnp.newaxis, :]
+        self.subs = initialize_solver_state(self.solver, self.subs)
+        self.subs['pos']     = init_state[0:1]
+        self.subs['ang']     = jnp.atan(init_state[2:3] / init_state[1:2])
+        self.subs['ang-cos'] = init_state[1:2]
+        self.subs['ang-sin'] = init_state[2:3]
+        self.subs['vel']     = init_state[3:4]
+        self.subs['ang-vel'] = init_state[4:5]
+
         key, subkey = jax.random.split(key)
         rollouts = self.action_traj_evaluator(
             subkey,
-            policy_params={'a': actions},
+            policy_params={'force': actions},
             hyperparams=None,
             subs=self.subs,
             model_params=self.compiler.model_params)
 
         # add the initial state and remove the final state
         # from the trajectory of states generated during the rollout
-        states = jnp.concatenate((init_state[jnp.newaxis, :], rollouts['pvar']['s'][0, :-1]), axis=0)
+        new_subs = rollouts['pvar']
+        truncated_state_traj = jnp.stack([
+            new_subs['pos'][0, :-1], new_subs['ang-cos'][0, :-1], new_subs['ang-sin'][0, :-1],
+            new_subs['vel'][0, :-1], new_subs['ang-vel'][0, :-1]], axis=1)
+        states = jnp.concatenate([init_state[jnp.newaxis, :], truncated_state_traj], axis=0)
         # shift rewards if required
         rewards = rollouts['reward'][0] + shift_reward * self.reward_shift_val
 
