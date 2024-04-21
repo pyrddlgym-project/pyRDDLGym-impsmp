@@ -51,7 +51,7 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, epsilon, policy, m
     def _compute_dJ_summand(init, _):
         """Generates a single summand in the expression for the dJ estimator"""
         key, adv_estimator_state = init
-        key, init_states = model.batch_generate_initial_state(key, (model.state_dim,))
+        key, init_states = model.generate_initial_state_batched(key, ())
         key, states, actions, rewards = model.rollout_parametrized_policy(key, init_states, theta)
         key, advantages, adv_estimator_state = adv_estimator.estimate(key, states, actions, rewards, adv_estimator_state)
         pi_inv = 1 / (policy.pdf(key, theta, states, actions) + epsilon)
@@ -77,7 +77,7 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, epsilon, policy, m
 
 @functools.partial(jax.jit, static_argnames=('eval_batch_size', 'policy', 'model'))
 def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
-    key, init_states = model.batch_generate_initial_state(key, (eval_batch_size, model.state_dim))
+    key, init_states = model.generate_initial_state_batched(key, (eval_batch_size,))
     key, states, actions, rewards = model.rollout_parametrized_policy_batched(key, init_states, theta)
     rewards = jnp.sum(rewards, axis=1) # sum rewards along the time axis
     key, subkey = jax.random.split(key)

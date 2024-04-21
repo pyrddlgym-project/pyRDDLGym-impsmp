@@ -167,7 +167,7 @@ def compute_impsamp_dJ_hat_estimate(
 
 @functools.partial(jax.jit, static_argnames=('eval_batch_size', 'policy', 'model'))
 def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
-    key, init_model_states = model.batch_generate_initial_state(key, (eval_batch_size, model.state_dim))
+    key, init_model_states = model.generate_initial_state_batched(key, (eval_batch_size,))
     key, states, actions, rewards = model.rollout_parametrized_policy_batched(
         key, init_model_states, theta)
     rewards = jnp.sum(rewards, axis=1) # sum rewards along the time axis
@@ -240,7 +240,7 @@ def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, 
         key, algo_stats = evaluate_policy(key, it, algo_stats, eval_batch_size, policy.theta, policy, eval_model)
 
         # generate the initial states
-        key, init_model_states = train_model.batch_generate_initial_state(key, init_model_state_shape)
+        key, init_model_states = train_model.generate_initial_state_batched(key, init_model_state_shape[:-1])
 
         # sample action trajectories from the instrumental density
         key, subkey = jax.random.split(key)

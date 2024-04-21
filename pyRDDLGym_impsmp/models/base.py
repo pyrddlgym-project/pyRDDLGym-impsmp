@@ -1,9 +1,9 @@
-"""Abstract interface for environment models"""
+"""Abstract interface for deterministic environment models"""
 import abc
 
 class BaseDeterministicModel(abc.ABC):
     @abc.abstractmethod
-    def batch_generate_initial_state(self, key, batch_shape):
+    def generate_initial_state_batched(self, key, batch_shape):
         """Generates the initial model states over a batch of generic shape
 
         Args:

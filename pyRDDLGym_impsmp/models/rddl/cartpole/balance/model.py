@@ -1,4 +1,5 @@
-"""Interface to the RDDL CartPole models"""
+"""Interface to the RDDL CartPole Balance models"""
+import numpy as np
 import jax.numpy as jnp
 import jax.random
 import os
@@ -15,9 +16,7 @@ from pyRDDLGym_impsmp.models.base import BaseDeterministicModel
 this_dir = os.path.dirname(os.path.abspath(__file__))
 
 VALID_INITIALIZATION_STRATEGIES = (
-    'constant',
-    'normal',
-    'uniform',
+    'dm_control',
 )
 
 VALID_SOLVERS = (
@@ -28,74 +27,63 @@ VALID_SOLVERS = (
     'adams_bashforth_5step',
 )
 
-def generate_initial_states(key, config, batch_shape):
+def generate_initial_states(key, config, batch_shape, state_dim):
     """Initializes a batch of policy rollouts"""
-    if config['type'] == 'constant':
-        val = config['params']['value']
-        init_states = jnp.ones(shape=batch_shape) * val
-    elif config['type'] == 'normal':
-        mean = config['params']['mean']
-        scale = config['params']['scale']
-        init_states = mean + jax.random.normal(key, shape=batch_shape) * scale
-    elif config['type'] == 'uniform':
-        min = config['params']['min']
-        max = config['params']['max']
-        init_states = jax.random.uniform(key, shape=batch_shape, minval=min, maxval=max)
+    if config['type'] == 'dm_control':
+        # generates the initial state consistently with the configuration in dm_control
+        # see also
+        #     https://github.com/google-deepmind/dm_control/blob/main/dm_control/suite/cartpole.py
+        subkeys = jax.random.split(key, num=4)
+        cart_pos = jax.random.uniform(subkeys[0], shape=batch_shape, minval=-0.1, maxval=0.1)
+        cart_vel = 0.01 * jax.random.normal(subkeys[1], shape=batch_shape)
+        pole_ang = jax.random.uniform(subkeys[2], shape=batch_shape, minval=-0.034, maxval=0.034)
+        pole_ang_sin = jnp.sin(pole_ang)
+        pole_ang_cos = jnp.cos(pole_ang)
+        pole_ang_vel = 0.01 * jax.random.normal(subkeys[3], shape=batch_shape)
+        init_states = jnp.stack([
+            pole_ang_sin, pole_ang_cos, cart_pos, cart_vel, pole_ang_vel], axis=-1)
     return init_states
 
 
 class RDDLCartpoleBalanceModel(BaseDeterministicModel):
-    """A wrapper around the RDDL Sum-of-Half-Spaces environment.
+    """A wrapper around the RDDL CartPole Balance environment.
 
-    In the Sum-of-Half-Spaces environment, the reward function is given by the
-    expression
+    The purpose of the wrapper is to provide methods for JIT compiling RDDL rollouts.
+    The rollouts can use either the relaxed RDDL model or the non-relaxed model.
+    The rollouts can sample actions from a given policy with respect to the current
+    parameters theta, or the rollouts can use a predetermined sequence of actions.
 
-            R(x) = sum_{i=1}^N sgn( sum_{d=1}^|S| W_{id} * (x_d - B_{id} )
+    To be consistent with the dm_control version of the CartPole Balance environment,
+    the flattened observations are ordered as
+        (ang-sin, ang-cos, pos, vel, ang-vel)
 
-    where N is the number of summands parameter, W_{id}, B_{id} are fixed constants
-    that define the problem, and x = (x_1, ..., x_|S|) is the state vector.
-    Please refer to the domain.rddl file for the domain definition in the RDDL
-    language.
-
-    The actions in the environment are translations of the state vector.
-
-    The purpose of the SumOfHalfSpaces wrapper is to provide methods for JIT compiling
-    batched RDDL rollouts. The rollouts can use either the relaxed RDDL model or the
-    non-relaxed model. The rollouts can sample actions from a given policy with respect
-    to the current parameters theta, or the rollouts can use a predetermined sequence
-    of actions.
-
-    The RDDL instance files for the SumOfHalfSpaces environment are pre-generated.
-    They are indexed by the dimension of the ambient space (action_dim), the number
-    of summands in the objective function (n_summands), and the instance index (instance_idx).
-    (Several instances are generated for each (action_dim, n_summands) pair in
-    order to make statistically meaningful comparisons.)
-
-    For example, when action_dim=81, n_summands=10, instance_idx=3, the relevant
-    RDDL instance file is stored in the directory
-        models/sum_of_half_spaces/instances/dim81_sum10/instance3.rddl
-
-    Note: As required, new instances may be generated using the script
-        models/sum_of_half_spaces/instances/generator.py
+    The RDDL instance files for the RDDLCartPoleBalance environment are pre-generated.
+    The reward can be dense or sparse. The solver of the differential equations of
+    motion may also be selected among several options. For each version of the domain,
+    there is a single instance called `instance0.rddl` in the appropriate directory.
 
     Constructor parameters:
         key: jax.random.PRNGKey
             Key for the current random generator state
+        state_dim: Int
         action_dim: Int
             Dimension of the state and action space
-        n_summands: Int
-            Number of summands in the reward function definition
-        instance_idx: Int
-            Index of the RDDL instance.
-            There are several instances for each (action_dim, n_summands) pair
         is_relaxed: Bool
             Whether or not to apply RDDL relaxations
         initial_state_config: Dict
-            Parameters that define the initial state distribution. Please
-            also see the generate_initial_states function above.
+            Parameters that define the initial state distribution.
+            Please also see the generate_initial_states function and
+            VALID_INITIALIZATION_STRATEGIES tuple above.
         reward_shift: Float
             Fixed value to add to all (immediate) reward calculations.
             Can be 0.0
+        dense_reward: Bool
+            Whether to use the dense or sparse reward version of the domain.
+            The reward design is made to be consistent with the dm_control
+            CartPole instances.
+        solver: String
+            The diff.eq. solver to use to propagate the environment.
+            For the valid options please see the VALID_SOLVERS global tuple.
         compiler_kwargs: Dict
             Keyword arguments for the JIT compiler. For example, this
             can specify the batch dimension, or properties of the RDDL
@@ -153,12 +141,6 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
         self.initial_state_config = initial_state_config
         self.reward_shift_val = reward_shift
 
-        print(self.rddl_env.observation_space)
-        print(self.rddl_env.action_space)
-
-        exit()
-        #@@@ edited up to here
-
 
     def compile(self, compiler_kwargs):
         """Compiles rollouts in the non-relaxed RDDL model.
@@ -181,8 +163,8 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
         # are sampled using the policy; the policy parameters are
         # passed to the compiled rollouts generator at run-time)
         def parametrized_stochastic_policy(key, policy_params, hyperparams, step, states):
-            states = states['s']
-            return {'a': policy_sample_fn(key, policy_params['theta'], states)}
+            states_flat = np.array([states['ang-sin'], states['ang-cos'], states['pos'], states['vel'], states['ang-vel']])
+            return {'force': policy_sample_fn(key, policy_params['theta'], states_flat)}
 
         self.parametrized_policy_rollout_sampler = self.compiler.compile_rollouts(
             policy=parametrized_stochastic_policy,
@@ -193,7 +175,7 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
         # the actions a0, a1, ..., aT are passed in the hyperparams dictionary.
         # the policy simply takes action a_t at step t
         def deterministic_action_traj_policy(key, policy_params, hyperparams, step, states):
-            return {'a': policy_params['a'][step]}
+            return {'force': policy_params['force'][step]}
 
         self.action_traj_evaluator = self.compiler.compile_rollouts(
             policy=deterministic_action_traj_policy,
@@ -235,8 +217,8 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
         # are sampled using the policy; the policy parameters are
         # passed to the compiled rollouts generator at run-time)
         def parametrized_stochastic_policy(key, policy_params, hyperparams, step, states):
-            states = states['s']
-            return {'a': policy_sample_fn(key, policy_params['theta'], states)}
+            states_flat = np.array([states['ang-sin'], states['ang-cos'], states['pos'], states['vel'], states['ang-vel']])
+            return {'force': policy_sample_fn(key, policy_params['theta'], states_flat)}
 
         self.parametrized_policy_rollout_sampler = self.compiler.compile_rollouts(
             policy=parametrized_stochastic_policy,
@@ -247,7 +229,7 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
         # the actions a0, a1, ..., aT are passed in the hyperparams dictionary.
         # the policy simply takes action a_t at step t
         def deterministic_action_traj_policy(key, policy_params, hyperparams, step, states):
-            return {'a': policy_params['a'][step]}
+            return {'force': policy_params['force'][step]}
 
         self.action_traj_evaluator = self.compiler.compile_rollouts(
             policy=deterministic_action_traj_policy,
@@ -264,13 +246,14 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
             subs[next_state] = subs[state]
         self.subs = subs
 
-    def batch_generate_initial_state(self, key, batch_shape):
+    def generate_initial_state_batched(self, key, batch_shape):
         """Generates the initial states over a batch of generic shape.
         The batch does not have to have shape (n_rollouts, state_dim).
         For example, it could have shape (n_rollouts, n_params, state_dim).
         """
         key, subkey = jax.random.split(key)
-        init_states = generate_initial_states(subkey, self.initial_state_config, batch_shape)
+        init_states = generate_initial_states(subkey, self.initial_state_config, batch_shape, self.state_dim)
+        print(batch_shape)
         return key, init_states
 
     def rollout_parametrized_policy(self, key, init_states, theta, shift_reward=False):
@@ -295,6 +278,7 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
             rewards: jnp.array shape=(horizon,)
                 Sampled trajectory
         """
+        print(self.subs.keys()); exit()
         self.subs['s'] = init_states[jnp.newaxis, :]
 
         key, subkey = jax.random.split(key)

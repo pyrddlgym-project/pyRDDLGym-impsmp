@@ -21,19 +21,19 @@ VALID_INITIALIZATION_STRATEGIES = (
 )
 
 
-def generate_initial_states(key, config, batch_shape):
+def generate_initial_states(key, config, batch_shape, state_dim):
     """Initializes a batch of policy rollouts"""
     if config['type'] == 'constant':
         val = config['params']['value']
-        init_states = jnp.ones(shape=batch_shape) * val
+        init_states = jnp.ones(shape=(*batch_shape, state_dim)) * val
     elif config['type'] == 'normal':
         mean = config['params']['mean']
         scale = config['params']['scale']
-        init_states = mean + jax.random.normal(key, shape=batch_shape) * scale
+        init_states = mean + jax.random.normal(key, shape=(*batch_shape, state_dim)) * scale
     elif config['type'] == 'uniform':
         min = config['params']['min']
         max = config['params']['max']
-        init_states = jax.random.uniform(key, shape=batch_shape, minval=min, maxval=max)
+        init_states = jax.random.uniform(key, shape=(*batch_shape, state_dim), minval=min, maxval=max)
     return init_states
 
 
@@ -52,11 +52,10 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
 
     The actions in the environment are translations of the state vector.
 
-    The purpose of the SumOfHalfSpaces wrapper is to provide methods for JIT compiling
-    batched RDDL rollouts. The rollouts can use either the relaxed RDDL model or the
-    non-relaxed model. The rollouts can sample actions from a given policy with respect
-    to the current parameters theta, or the rollouts can use a predetermined sequence
-    of actions.
+    The purpose of the wrapper is to provide methods for JIT compiling RDDL rollouts.
+    The rollouts can use either the relaxed RDDL model or the non-relaxed model.
+    The rollouts can sample actions from a given policy with respect to the current
+    parameters theta, or the rollouts can use a predetermined sequence of actions.
 
     The RDDL instance files for the SumOfHalfSpaces environment are pre-generated.
     They are indexed by the dimension of the ambient space (action_dim), the number
@@ -74,6 +73,7 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
     Constructor parameters:
         key: jax.random.PRNGKey
             Key for the current random generator state
+        state_dim: Int
         action_dim: Int
             Dimension of the state and action space
         n_summands: Int
@@ -96,6 +96,7 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
     """
     def __init__(self,
                  key,
+                 state_dim,
                  action_dim,
                  n_summands,
                  instance_idx,
@@ -246,13 +247,13 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
             subs[next_state] = subs[state]
         self.subs = subs
 
-    def batch_generate_initial_state(self, key, batch_shape):
+    def generate_initial_state_batched(self, key, batch_shape):
         """Generates the initial states over a batch of generic shape.
         The batch does not have to have shape (n_rollouts, state_dim).
         For example, it could have shape (n_rollouts, n_params, state_dim).
         """
         key, subkey = jax.random.split(key)
-        init_states = generate_initial_states(subkey, self.initial_state_config, batch_shape)
+        init_states = generate_initial_states(subkey, self.initial_state_config, batch_shape, self.state_dim)
         return key, init_states
 
     def rollout_parametrized_policy(self, key, init_states, theta, shift_reward=False):
