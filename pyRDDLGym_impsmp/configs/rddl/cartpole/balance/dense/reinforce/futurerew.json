@@ -5,7 +5,7 @@
   "seed": 3264,
   "state_dim": 5,
   "action_dim": 1,
-  "n_iters": 250,
+  "n_iters": 2500,
   "checkpoint_freq": 25,
   "models": {
     "type": "rddl_cartpole_balance",
@@ -37,8 +37,10 @@
     }
   },
   "adv_estimator": {
-    "type": "total_traj_reward",
-    "params": {}
+    "type": "future_traj_reward",
+    "params": {
+      "gamma": 1.0
+    }
   },
   "optimizer": {
     "type": "adabelief",

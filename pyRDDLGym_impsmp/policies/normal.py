@@ -50,6 +50,11 @@ class MultivarNormalHKParametrization:
             self.diagonal_of_jacobian      = self.autodiff_diagonal_of_jacobian
             self.diagonal_of_jacobian_traj = self.autodiff_diagonal_of_jacobian_traj
 
+    def set_weights(self, theta):
+        """Set the policy weights theta to the provided values.
+        The provided theta must have the same PyTree shape as
+        the policy theta"""
+        self.theta = jax.tree_util.tree_map(jnp.array, theta)
 
     def apply(self, key, theta, state):
         """Apply the policy to get the means vector and the covariance matrix"""

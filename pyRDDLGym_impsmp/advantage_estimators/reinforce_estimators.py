@@ -16,20 +16,18 @@ import pyRDDLGym_impsmp.registry
 
 
 def compute_future_discounted_traj_rewards(rewards, gamma):
-    #TODO: Update to make unbatched
-    """Given a batch of reward sequences of the form
+    """Given a reward sequence of the form
            r_0, r_1, r_2, ..., r_{T-1}
     and a discount factor gamma, computes the quantities
            G_t = sum_{t'=t}^{T-1} gamma^{t'-t} r_{t'}
-    for each sequence in the batch
     """
-    B, T = rewards.shape
+    T = rewards.shape
     gammas = jnp.roll(jnp.cumprod(gamma * jnp.ones(T)), 1)
     gammas = gammas.at[0].set(1.0)
     discounted_rewards = rewards * gammas
-    flipped_discounted_rewards = jnp.flip(discounted_rewards, axis=1)
-    flipped_future_disc_trajrews = jnp.cumsum(flipped_discounted_rewards, axis=1)
-    future_disc_trajrews = jnp.flip(flipped_future_disc_trajrews, axis=1) / gammas
+    flipped_discounted_rewards = jnp.flip(discounted_rewards)
+    flipped_future_disc_trajrews = jnp.cumsum(flipped_discounted_rewards)
+    future_disc_trajrews = jnp.flip(flipped_future_disc_trajrews) / gammas
     return future_disc_trajrews
 
 
@@ -39,6 +37,9 @@ class TotalTrajRewardAdvEstimator(AdvEstimator):
            A(s_t, a_t) = \sum_{t'=0}^T  r_{t'}
     for all t
     """
+    def __init__(self, key):
+        pass
+
     def initialize_estimator_state(self, key, state_dim, action_dim):
         return key, {}
 
@@ -48,13 +49,14 @@ class TotalTrajRewardAdvEstimator(AdvEstimator):
         advantages = jnp.repeat(trajrews, T)
         return key, advantages, estimator_state
 
+    def print_report(self, it):
+        print('\tAdv.est :: Type=Total trajectory reward')
 
 
-# TODO: Update below to make un-batched
 class FutureTrajRewardAdvEstimator(AdvEstimator):
     """The advantages are estimated using the trajectory rewards beginning
-    with the current timestep, i.e.
-           A(s_t, a_t) = \sum_{t'=t}^T r_{t'}
+    with the current timestep, and possibly discounting, i.e.
+           A(s_t, a_t) = \sum_{t'=t}^T gamma^{t'-t} r_{t'}
     for all t
     """
     def __init__(self, key, gamma):
@@ -68,7 +70,11 @@ class FutureTrajRewardAdvEstimator(AdvEstimator):
         advantages = compute_future_discounted_traj_rewards(rewards, self.gamma)
         return key, advantages, estimator_state
 
+    def print_report(self, it):
+        print(f'\tAdv.est :: Type=Future trajectory reward :: Gamma={self.gamma:.2f}')
 
+
+# TODO: Update below to make un-batched
 class FutureTrajRewardWConstantBaselineAdvEstimator(AdvEstimator):
     """The advantages are estimated using the trajectory rewards beginning
     with the current timestep, with respect to a constant baseline, i.e.

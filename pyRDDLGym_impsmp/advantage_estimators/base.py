@@ -1,15 +1,15 @@
 """Common interface for Advantage estimators"""
-from abc import ABC, abstractmethod
+import abc
 
-
-class AdvEstimator(ABC):
-    def __init__(self, key):
-        pass
-
-    @abstractmethod
+class AdvEstimator(abc.ABC):
+    @abc.abstractmethod
     def initialize_estimator_state(self, key, state_dim, action_dim):
         pass
 
-    @abstractmethod
+    @abc.abstractmethod
     def estimate(self, key, states, actions, rewards, estimator_state):
+        pass
+
+    @abc.abstractmethod
+    def print_report(self, it):
         pass

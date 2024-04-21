@@ -9,8 +9,7 @@ import pyRDDLGym_impsmp.registry
 
 
 class SamplingModelQFunctionAdvEstimator(AdvEstimator):
-    """
-    """
+    """ *** Depracated *** """
     def __init__(self, key, gamma, num_hidden_nodes_Q, target_update_freq, grad_clip_val, optimizer):
         self.gamma = gamma
         self.grad_clip_val = grad_clip_val
