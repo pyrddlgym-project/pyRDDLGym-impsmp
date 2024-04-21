@@ -3,7 +3,6 @@
 // 
 // The goal is to push a cart on a flat track left or right by applying
 // a force to the side of the cart, to balance a pole on top of the cart.
-// The dense reward 
 //
 // References: 
 //
@@ -39,7 +38,7 @@ domain cartpole_balance_dense_ab5 {
 
         // cart and pole properties
         CART-MASS : { non-fluent, real, default = 1.0 };        // mass of the cart
-        CART-FRIC : { non-fluent, real, default = 0.00005 };     // coefficient of friction of cart on track
+        CART-FRIC : { non-fluent, real, default = 0.00005 };    // coefficient of friction of cart on track
         POLE-MASS : { non-fluent, real, default = 0.1 };        // mass of the pole
         POLE-LEN  : { non-fluent, real, default = 0.5 };        // half of the pole length
         POLE-FRIC : { non-fluent, real, default = 0.000002 };   // coefficient of friction of pole on cart
@@ -49,7 +48,7 @@ domain cartpole_balance_dense_ab5 {
         POS-LIMIT : { non-fluent, real, default = 1.7  };       // limit of cart position (measured from centre)
     
         // interm & derived fluents
-        ang          : { state-fluent, real, default = 0.0 };      // pole angle
+        ang       : { state-fluent, real, default = 0.0 };      // pole angle
         acc       : { interm-fluent, real };                    // position acceleration
         ang-acc   : { interm-fluent, real };                    // angular acceleration
 
@@ -114,7 +113,7 @@ domain cartpole_balance_dense_ab5 {
         upright    = 0.5 * (ang-cos + 1.0);
         centered   = 0.5 * (exp[-0.57564627324 * pos * pos] + 1.0);            // -0.57564627324 = nat.log(0.1) / 2**2
         small-ctrl = 0.2 * (max[1 - force * force, 0.0] + 4.0);
-        small-vel  = 0.5 * (exp[-0.09210340371 * ang-vel * ang-vel] + 1.0);    //-0.09210340371 = nat.log(0.1) / 5**2
+        small-vel  = 0.5 * (exp[-0.09210340371 * ang-vel * ang-vel] + 1.0);    // -0.09210340371 = nat.log(0.1) / 5**2
     };
 
     // Dense reward based on the dm_control version of CartPole Balance

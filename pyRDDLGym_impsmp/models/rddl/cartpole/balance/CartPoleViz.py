@@ -21,7 +21,7 @@ class CartPoleVisualizer(BaseViz):
         surf = pygame.Surface(figure_size)
         return screen, surf
 
-def convert2img(self, screen):
+    def convert2img(self, screen):
         data = np.transpose(np.array(pygame.surfarray.pixels3d(screen)),
                             axes=(1, 0, 2))
         img = Image.fromarray(data)

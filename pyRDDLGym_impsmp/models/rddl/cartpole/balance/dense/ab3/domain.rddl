@@ -15,13 +15,17 @@
 //    task in the MuJoCo-based dm_control benchmark suite:
 //        https://github.com/google-deepmind/dm_control/blob/main/dm_control/suite/cartpole.py
 //
+//    The coefficients used for the Adams-Bashforth implementation can be
+//    found on wiki:
+//        https://en.wikipedia.org/wiki/Linear_multistep_method
+//
 // Author(s): 
 //        Mike Gimelfarb (mgimelfarb@yahoo.ca)
 //        Modified for dense reward by Ilia Smirnov (iliathesmirnov@gmail.com)
 //
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
-domain cartpole_balance_dense_euler {
+domain cartpole_balance_dense_ab3 {
 
     requirements = {
         reward-deterministic
@@ -61,6 +65,13 @@ domain cartpole_balance_dense_euler {
         vel       : { state-fluent, real, default = 0.0 };      // cart velocity
         ang-vel   : { state-fluent, real, default = 0.0 };      // pole angular velocity
 
+        // history of accelerations and angular accelerations for the Adams-Bashforth method
+        prev-acc0     : { state-fluent, real, default = 0.0 };
+        prev-acc1     : { state-fluent, real, default = 0.0 };
+
+        prev-ang-acc0 : { state-fluent, real, default = 0.0 };
+        prev-ang-acc1 : { state-fluent, real, default = 0.0 };
+
         // actions
         force : { action-fluent, real, default = 0.0 };         // how much force to apply to the side of the cart
     };
@@ -73,22 +84,28 @@ domain cartpole_balance_dense_euler {
                    (POLE-LEN * (1.333333333333333 - (POLE-MASS * ang-cos * ang-cos) / (CART-MASS + POLE-MASS)));
         acc = (force + POLE-MASS * POLE-LEN * (ang-vel * ang-vel * ang-sin - ang-acc * ang-cos) - CART-FRIC * sgn[vel]) / (CART-MASS + POLE-MASS);
 
-        // Euler's method
+        // Adams-Bashforth 3rd-order method
         pos' = min[max[pos + TIME-STEP * vel + 0.5 * TIME-STEP * TIME-STEP * acc, -POS-LIMIT], POS-LIMIT];
         ang' = ang + TIME-STEP * ang-vel + 0.5 * TIME-STEP * TIME-STEP * ang-acc;
         ang-sin' = sin[ang'];
         ang-cos' = cos[ang'];
 
-        vel' = vel + TIME-STEP * acc;
-        ang-vel' = ang-vel + TIME-STEP * ang-acc;
+        vel' = vel + (TIME-STEP / 12.0) * (23.0 * acc - 16.0 * prev-acc0 + 5.0 * prev-acc1);
+        ang-vel' = ang-vel + (TIME-STEP / 12.0) * (23.0 * ang-acc - 16.0 * prev-ang-acc0 + 5.0 * prev-ang-acc1);
+
+        prev-acc0' = acc;
+        prev-acc1' = prev-acc0;
+
+        prev-ang-acc0' = ang-acc;
+        prev-ang-acc1' = prev-ang-acc0;
 
 
         // compute intermediate fluents for reward
         // (see also the dense CartPole Balance reward in the dm_control suite)
-        upright = 0.5 * (ang-cos + 1.0);
-        centered = 0.5 * (exp[-0.57564627324 * pos * pos] + 1.0);             // -0.57564627324 = nat.log(0.1) / 2**2
+        upright    = 0.5 * (ang-cos + 1.0);
+        centered   = 0.5 * (exp[-0.57564627324 * pos * pos] + 1.0);            // -0.57564627324 = nat.log(0.1) / 2**2
         small-ctrl = 0.2 * (max[1 - force * force, 0.0] + 4.0);
-        small-vel = 0.5 * (exp[-0.09210340371 * ang-vel * ang-vel] + 1.0);    // -0.09210340371 = nat.log(0.1) / 5**2
+        small-vel  = 0.5 * (exp[-0.09210340371 * ang-vel * ang-vel] + 1.0);    // -0.09210340371 = nat.log(0.1) / 5**2
     };
 
     // Dense reward based on the dm_control version of CartPole Balance
