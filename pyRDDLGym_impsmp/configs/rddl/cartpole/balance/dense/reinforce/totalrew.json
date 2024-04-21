@@ -1,0 +1,58 @@
+{ "useGPU": true,
+  "use64bit": true,
+  "debug_nans": true,
+  "enable_jit": true,
+  "seed": 3264,
+  "state_dim": 5,
+  "action_dim": 1,
+  "n_iters": 50,
+  "models": {
+    "type": "rddl_cartpole_balance",
+    "params": {
+      "reward_shift": 0.0,
+      "dense_reward": true,
+      "solver": "adams_bashforth_5step",
+      "specs": {
+        "train_model": {
+          "is_relaxed": false,
+          "initial_state_config": {
+            "type": "dm_control",
+            "params": {}
+          },
+          "compiler_kwargs": {}
+        }
+      }
+    }
+  },
+  "bijector": {
+    "type": "identity",
+    "params": {}
+  },
+  "policy": {
+    "type": "multivar_normal_with_linear_parametrization",
+    "params": {
+        "compute_jacobians_analytically": true,
+        "cov_lower_cap": 0.05
+    }
+  },
+  "adv_estimator": {
+    "type": "total_traj_reward",
+    "params": {}
+  },
+  "optimizer": {
+    "type": "adabelief",
+    "params": {
+      "learning_rate": 0.05
+    }
+  },
+  "algorithm": {
+    "type": "reinforce",
+    "params": {
+      "batch_size": 32,
+      "eval_batch_size": 32,
+      "epsilon": 1e-12,
+      "verbose": true
+    }
+  },
+  "save_to": null
+}
