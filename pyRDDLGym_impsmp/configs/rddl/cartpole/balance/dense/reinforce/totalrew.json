@@ -5,7 +5,8 @@
   "seed": 3264,
   "state_dim": 5,
   "action_dim": 1,
-  "n_iters": 50,
+  "n_iters": 250,
+  "checkpoint_freq": 25,
   "models": {
     "type": "rddl_cartpole_balance",
     "params": {
@@ -54,5 +55,5 @@
       "verbose": true
     }
   },
-  "save_to": null
+  "save_to": "/tmp"
 }

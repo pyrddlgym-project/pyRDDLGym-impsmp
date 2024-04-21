@@ -330,7 +330,7 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
         states = jnp.concatenate([init_state[jnp.newaxis, :], truncated_state_traj], axis=0)
         actions = rollouts['action']['force'][0, :, jnp.newaxis]
         # shift rewards if required
-        rewards = rollouts['reward'][0] + shift_reward * self.reward_shift_val
+        rewards = -rollouts['reward'][0] + shift_reward * self.reward_shift_val
         return key, states, actions, rewards
 
     def rollout_parametrized_policy_batched(self, key, batch_init_states, theta, shift_reward=False):
@@ -411,7 +411,7 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
             new_subs['vel'][0, :-1], new_subs['ang-vel'][0, :-1]], axis=1)
         states = jnp.concatenate([init_state[jnp.newaxis, :], truncated_state_traj], axis=0)
         # shift rewards if required
-        rewards = rollouts['reward'][0] + shift_reward * self.reward_shift_val
+        rewards = -rollouts['reward'][0] + shift_reward * self.reward_shift_val
 
         return key, states, actions, rewards
 

@@ -6,6 +6,7 @@
   "state_dim": 2,
   "action_dim": 2,
   "n_iters": 250,
+  "checkpoint_freq": 10,
   "models": {
     "type": "rddl_sum_of_half_spaces",
     "params": {

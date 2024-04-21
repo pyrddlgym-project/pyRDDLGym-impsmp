@@ -30,6 +30,7 @@ def main(config):
     state_dim = config['state_dim']
     action_dim = config['action_dim']
     n_iters = config['n_iters']
+    checkpoint_freq = config['checkpoint_freq']
     batch_size = config['algorithm']['params']['batch_size']
 
     # configure JAX
@@ -139,6 +140,7 @@ def main(config):
         key, algo_stats = algorithm_fn(
             key=key,
             n_iters=n_iters,
+            checkpoint_freq=checkpoint_freq,
             config=algorithm_params,
             bijector=bijector,
             policy=policy,

@@ -185,7 +185,8 @@ def print_impsamp_report(it, algo_stats, sampler, subt0, subt1):
     print(f'Eval. reward={algo_stats["reward_mean"][it]:.3f} \u00B1 {algo_stats["reward_sterr"][it]:.3f}\n')
 
 
-def impsamp(key, n_iters, config, bijector, policy, sampler, optimizer, models, adv_estimator, adv_estimator_state):
+def impsamp(key, n_iters, checkpoint_freq,
+            config, bijector, policy, sampler, optimizer, models, adv_estimator, adv_estimator_state):
     """Runs the REINFORCE with Importance Sampling algorithm"""
 
     sampling_model = models['sampling_model']

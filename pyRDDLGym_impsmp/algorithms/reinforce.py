@@ -94,7 +94,8 @@ def print_reinforce_report(it, algo_stats, subt0, subt1):
     print(f'Eval. reward={algo_stats["reward_mean"][it]:.3f} \u00B1 {algo_stats["reward_sterr"][it]:.3f}\n')
 
 
-def reinforce(key, n_iters, config, bijector, policy, sampler, optimizer, models, adv_estimator, adv_estimator_state):
+def reinforce(key, n_iters, checkpoint_freq,
+              config, bijector, policy, sampler, optimizer, models, adv_estimator, adv_estimator_state):
     """Runs the REINFORCE algorithm"""
     train_model = models['train_model']
     eval_model = models.get('eval_model', train_model)
@@ -118,8 +119,7 @@ def reinforce(key, n_iters, config, bijector, policy, sampler, optimizer, models
         'reward_sterr':       jnp.empty(shape=(n_iters,)),
     }
 
-    if save_dJ:
-        algo_stats['dJ'] = jnp.empty(shape=(n_iters, batch_size, policy.n_params))
+    checkpoints = []
 
     # initialize optimizer
     opt_state = optimizer.init(policy.theta)
@@ -142,10 +142,20 @@ def reinforce(key, n_iters, config, bijector, policy, sampler, optimizer, models
         if verbose:
             print_reinforce_report(it, algo_stats, subt0, timer())
 
+        if it > 0 and it % checkpoint_freq == 0:
+            checkpoints.append(policy.theta.copy())
+
     algo_stats.update({
         'algorithm': 'REINFORCE',
         'n_iters': n_iters,
+        'checkpoints': checkpoints,
         'config': config,
     })
+
+    #TODO: Temporary, remove
+    import matplotlib.pyplot as plt
+    plt.plot(range(n_iters), algo_stats['reward_mean'])
+    plt.saveto('/tmp/reinforce_plot.png')
+    #DONE
 
     return key, algo_stats
