@@ -21,8 +21,8 @@
 //        https://en.wikipedia.org/wiki/Linear_multistep_method
 //
 // Author(s): 
-//		Mike Gimelfarb (mgimelfarb@yahoo.ca)
-//      Modified for dense reward by Ilia Smirnov (iliathesmirnov@gmail.com)
+//        Mike Gimelfarb (mgimelfarb@yahoo.ca)
+//        Modified for dense reward by Ilia Smirnov (iliathesmirnov@gmail.com)
 //
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -34,24 +34,24 @@ domain cartpole_balance_dense_ab5 {
 
     pvariables {
         //forces
-		G         : { non-fluent, real, default = 9.81 };       // force of gravity acting down
-		FORCE-MAX : { non-fluent, real, default = 1.0  };       // max force applied to the side of the cart
+        G         : { non-fluent, real, default = 9.81 };       // force of gravity acting down
+        FORCE-MAX : { non-fluent, real, default = 1.0  };       // max force applied to the side of the cart
 
-		// cart and pole properties
-		CART-MASS : { non-fluent, real, default = 1.0 };        // mass of the cart
+        // cart and pole properties
+        CART-MASS : { non-fluent, real, default = 1.0 };        // mass of the cart
         CART-FRIC : { non-fluent, real, default = 0.00005 };     // coefficient of friction of cart on track
-		POLE-MASS : { non-fluent, real, default = 0.1 };        // mass of the pole
-		POLE-LEN  : { non-fluent, real, default = 0.5 };        // half of the pole length
+        POLE-MASS : { non-fluent, real, default = 0.1 };        // mass of the pole
+        POLE-LEN  : { non-fluent, real, default = 0.5 };        // half of the pole length
         POLE-FRIC : { non-fluent, real, default = 0.000002 };   // coefficient of friction of pole on cart
 
-		// other constants
-		TIME-STEP : { non-fluent, real, default = 0.01 };       // seconds between state updates
-		POS-LIMIT : { non-fluent, real, default = 1.7  };       // limit of cart position (measured from centre)
-	
-		// interm & derived fluents
-        ang	      : { state-fluent, real, default = 0.0 };      // pole angle
-		acc       : { interm-fluent, real };                    // position acceleration
-		ang-acc   : { interm-fluent, real };                    // angular acceleration
+        // other constants
+        TIME-STEP : { non-fluent, real, default = 0.01 };       // seconds between state updates
+        POS-LIMIT : { non-fluent, real, default = 1.7  };       // limit of cart position (measured from centre)
+    
+        // interm & derived fluents
+        ang          : { state-fluent, real, default = 0.0 };      // pole angle
+        acc       : { interm-fluent, real };                    // position acceleration
+        ang-acc   : { interm-fluent, real };                    // angular acceleration
 
         // interm fluents for reward computation
         upright    : { interm-fluent, real };                   // how close the pole is to being upright
@@ -59,7 +59,7 @@ domain cartpole_balance_dense_ab5 {
         small-ctrl : { interm-fluent, real };                   // how close the magnitude of the actuations is to 0
         small-vel  : { interm-fluent, real };                   // how small the angular velocity of the pole is
 
-		// states
+        // states
         ang-sin   : { state-fluent, real, default = 0.0 };      // sine of pole angle
         ang-cos   : { state-fluent, real, default = 0.0 };      // cosine of pole angle
         pos       : { state-fluent, real, default = 0.0 };      // cart position
@@ -82,21 +82,21 @@ domain cartpole_balance_dense_ab5 {
     };
 
     cpfs {
-		// compute the pole angular acceleration
+        // compute the pole angular acceleration
         ang-acc = (G * ang-sin
                    + ((-force - POLE-MASS * POLE-LEN * ang-vel * ang-vel * ang-sin + CART-FRIC * sgn[vel]) / (CART-MASS + POLE-MASS)) * ang-cos
                    - POLE-FRIC * ang-vel / (POLE-MASS * POLE-LEN)) /
                    (POLE-LEN * (1.333333333333333 - (POLE-MASS * ang-cos * ang-cos) / (CART-MASS + POLE-MASS)));
         acc = (force + POLE-MASS * POLE-LEN * (ang-vel * ang-vel * ang-sin - ang-acc * ang-cos) - CART-FRIC * sgn[vel]) / (CART-MASS + POLE-MASS);
 
-		// Adams-Bashforth 5th-order method
-		pos' = min[max[pos + TIME-STEP * vel + 0.5 * TIME-STEP * TIME-STEP * acc, -POS-LIMIT], POS-LIMIT];
-		ang' = ang + TIME-STEP * ang-vel + 0.5 * TIME-STEP * TIME-STEP * ang-acc;
+        // Adams-Bashforth 5th-order method
+        pos' = min[max[pos + TIME-STEP * vel + 0.5 * TIME-STEP * TIME-STEP * acc, -POS-LIMIT], POS-LIMIT];
+        ang' = ang + TIME-STEP * ang-vel + 0.5 * TIME-STEP * TIME-STEP * ang-acc;
         ang-sin' = sin[ang'];
         ang-cos' = cos[ang'];
 
-		vel' = vel + (TIME-STEP / 720.0) * (1901.0 * acc - 2774.0 * prev-acc0 + 2616.0 * prev-acc1 - 1274.0 * prev-acc2 + 251.0 * prev-acc3);
-		ang-vel' = ang-vel + (TIME-STEP / 720.0) * (1901.0 * ang-acc - 2774.0 * prev-ang-acc0 + 2616.0 * prev-ang-acc1 - 1274.0 * prev-ang-acc2 + 251.0 * prev-ang-acc3);
+        vel' = vel + (TIME-STEP / 720.0) * (1901.0 * acc - 2774.0 * prev-acc0 + 2616.0 * prev-acc1 - 1274.0 * prev-acc2 + 251.0 * prev-acc3);
+        ang-vel' = ang-vel + (TIME-STEP / 720.0) * (1901.0 * ang-acc - 2774.0 * prev-ang-acc0 + 2616.0 * prev-ang-acc1 - 1274.0 * prev-ang-acc2 + 251.0 * prev-ang-acc3);
 
         prev-acc0' = acc;
         prev-acc1' = prev-acc0;
@@ -121,15 +121,15 @@ domain cartpole_balance_dense_ab5 {
     reward = upright * centered * small-ctrl * small-vel;
 
     state-invariants {
-		// system is physically plausible
-		G >= 0 ^ FORCE-MAX >= 0;
-		CART-MASS >= 0 ^ POLE-MASS >= 0 ^ POLE-LEN >= 0;
-		TIME-STEP >= 0 ^ POS-LIMIT >= 0;
+        // system is physically plausible
+        G >= 0 ^ FORCE-MAX >= 0;
+        CART-MASS >= 0 ^ POLE-MASS >= 0 ^ POLE-LEN >= 0;
+        TIME-STEP >= 0 ^ POS-LIMIT >= 0;
     };
 
     action-preconditions {
         force >= -FORCE-MAX;
-		force <= FORCE-MAX;
+        force <= FORCE-MAX;
     };
 
 }
