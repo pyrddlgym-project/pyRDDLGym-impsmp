@@ -37,9 +37,10 @@
     }
   },
   "adv_estimator": {
-    "type": "future_traj_reward",
+    "type": "future_traj_reward_w_constant_baseline",
     "params": {
-      "gamma": 0.99
+      "gamma": 1.0,
+      "base_val": -500.0
     }
   },
   "optimizer": {

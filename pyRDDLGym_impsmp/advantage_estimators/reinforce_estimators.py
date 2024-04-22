@@ -74,7 +74,6 @@ class FutureTrajRewardAdvEstimator(AdvEstimator):
         print(f'\tAdv.est :: Type=Future trajectory reward :: Gamma={self.gamma:.2f}')
 
 
-# TODO: Update below to make un-batched
 class FutureTrajRewardWConstantBaselineAdvEstimator(AdvEstimator):
     """The advantages are estimated using the trajectory rewards beginning
     with the current timestep, with respect to a constant baseline, i.e.
@@ -84,6 +83,7 @@ class FutureTrajRewardWConstantBaselineAdvEstimator(AdvEstimator):
     def __init__(self, key, gamma, base_val):
         self.gamma = gamma
         self.base_val = base_val
+        assert 0.0 < self.gamma <= 1.0
 
     def initialize_estimator_state(self, key, state_dim, action_dim):
         return key, {}
@@ -93,7 +93,12 @@ class FutureTrajRewardWConstantBaselineAdvEstimator(AdvEstimator):
         advantages = future_disc_trajrews - self.base_val
         return key, advantages, estimator_state
 
+    def print_report(self, it):
+        print(f'\tAdv.est :: Type=Future trajectory reward with constant baseline :: Gamma={self.gamma:.2f} :: Baseline={self.base_val:.2f}')
 
+
+
+# TODO: Update all of the classes below to make un-batched
 class FutureTrajRewardWRunningAvgBaselineAdvEstimator(AdvEstimator):
     """The advantages are estimated using the trajectory rewards beginning
     with the current timestep, with respect to a running average baseline, i.e.
