@@ -3,52 +3,35 @@
   "debug_nans": false,
   "enable_jit": true,
   "seed": 3264,
-  "state_dim": 2,
-  "action_dim": 2,
+  "state_dim": 5,
+  "action_dim": 1,
   "n_iters": 250,
   "checkpoint_freq": 10,
   "models": {
-    "type": "rddl_sum_of_half_spaces",
+    "type": "rddl_cartpole_balance",
     "params": {
-      "n_summands": 10,
-      "instance_idx": 0,
       "reward_shift": 0.0,
+      "dense_reward": true,
+      "solver": "adams_bashforth_5step",
       "specs": {
         "train_model": {
           "is_relaxed": false,
           "initial_state_config": {
-            "type": "normal",
-            "params": {
-              "mean": 0.0,
-              "scale": 2.0
-            }
+            "type": "dm_control",
+            "params": {}
           },
           "compiler_kwargs": {}
         },
         "sampling_model": {
           "is_relaxed": true,
           "initial_state_config": {
-            "type": "normal",
-            "params": {
-              "mean": 0.0,
-              "scale": 2.0
-            }
+            "type": "dm_control",
+            "params": {}
           },
           "compiler_kwargs": {
             "use64bit": true,
             "weight": 10.0
           }
-        },
-        "eval_model": {
-          "is_relaxed": false,
-          "initial_state_config": {
-            "type": "normal",
-            "params": {
-              "mean": 0.0,
-              "scale": 2.0
-            }
-          },
-          "compiler_kwargs": {}
         }
       }
     }
@@ -76,27 +59,27 @@
       "batch_size": 128,
       "eval_batch_size": 32,
       "sampler": {
-        "type": "nuts",
+        "type": "hmc",
         "params": {
           "step_size_distribution": {
             "type": "constant",
             "params": {
-              "value": 0.1
+              "value": 0.05
             }
           },
           "init_strategy": {
             "type": "uniform",
             "params": {
-              "min": -2.0,
-              "max": 2.0
+              "min": -0.1,
+              "max": 0.1
             }
           },
           "reinit_strategy": {
             "type": "rollout_cur_policy",
             "params": {}
           },
+          "num_leapfrog_steps": 10,
           "burnin_per_chain": 128,
-          "max_tree_depth": 8,
           "num_adaptation_steps": null
         }
       },
