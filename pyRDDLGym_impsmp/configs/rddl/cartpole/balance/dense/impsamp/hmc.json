@@ -1,4 +1,4 @@
-{ "useGPU": true,
+{ "useGPU": false,
   "use64bit": true,
   "debug_nans": false,
   "enable_jit": true,
@@ -56,7 +56,7 @@
   "algorithm": {
     "type": "impsamp",
     "params": {
-      "batch_size": 128,
+      "batch_size": 4,
       "eval_batch_size": 32,
       "sampler": {
         "type": "hmc",
@@ -64,22 +64,19 @@
           "step_size_distribution": {
             "type": "constant",
             "params": {
-              "value": 0.05
+              "value": 0.001
             }
           },
           "init_strategy": {
-            "type": "uniform",
-            "params": {
-              "min": -0.1,
-              "max": 0.1
-            }
+            "type": "rollout_cur_policy",
+            "params": {}
           },
           "reinit_strategy": {
             "type": "rollout_cur_policy",
             "params": {}
           },
-          "num_leapfrog_steps": 10,
-          "burnin_per_chain": 128,
+          "num_leapfrog_steps": 20,
+          "burnin_per_chain": 256,
           "num_adaptation_steps": null
         }
       },

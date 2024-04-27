@@ -89,9 +89,10 @@ def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
     algo_stats['reward_sterr'] = algo_stats['reward_sterr'].at[it].set(algo_stats['reward_std'][it] / jnp.sqrt(eval_batch_size))
     return key, algo_stats
 
-def print_reinforce_report(it, algo_stats, adv_estimator, subt0, subt1):
+def print_reinforce_report(it, algo_stats, model, policy, adv_estimator, subt0, subt1):
     """Prints out the results for the current REINFORCE iteration to console"""
     print(f'Iter {it} :: REINFORCE :: Batch Size={algo_stats["batch_size"]} :: Runtime={subt1-subt0}s')
+    policy.print_report(it)
     adv_estimator.print_report(it)
     print(f'\tEval. reward={algo_stats["reward_mean"][it]:.3f} \u00B1 {algo_stats["reward_sterr"][it]:.3f}\n')
 
@@ -145,7 +146,7 @@ def reinforce(key, n_iters, checkpoint_freq,
 
         # update statistics and print out report for current iteration
         if verbose:
-            print_reinforce_report(it, algo_stats, adv_estimator, subt0, timer())
+            print_reinforce_report(it, algo_stats, train_model, policy, adv_estimator, subt0, timer())
 
         # checkpoint policy params as necessary
         if it > 0 and it % checkpoint_freq == 0:
@@ -161,11 +162,4 @@ def reinforce(key, n_iters, checkpoint_freq,
         'best_eval_checkpoint': best_eval_checkpoint,
         'config': config,
     })
-
-    #TODO: Temporary, remove
-    import matplotlib.pyplot as plt
-    plt.plot(range(n_iters), algo_stats['reward_mean'])
-    plt.savefig('/tmp/reinforce_plot.png')
-    #DONE
-
     return key, algo_stats

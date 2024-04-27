@@ -40,7 +40,7 @@
     "type": "future_traj_reward_w_constant_baseline",
     "params": {
       "gamma": 1.0,
-      "base_val": -500.0
+      "base_val": -400.0
     }
   },
   "optimizer": {

@@ -285,11 +285,4 @@ def impsamp(key, n_iters, checkpoint_freq,
         'config': config,
         'policy_theta': policy.theta
     })
-
-    #TODO: Remove, this is temporary
-    import matplotlib.pyplot as plt
-    plt.plot(range(n_iters), algo_stats['reward_mean'])
-    plt.savefig('/tmp/impsamp_plot.png')
-    #DONE
-
     return key, algo_stats

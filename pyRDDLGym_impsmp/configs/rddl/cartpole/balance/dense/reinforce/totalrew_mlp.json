@@ -6,7 +6,7 @@
   "state_dim": 5,
   "action_dim": 1,
   "n_iters": 500,
-  "checkpoint_freq": 100,
+  "checkpoint_freq": 50,
   "models": {
     "type": "rddl_cartpole_balance",
     "params": {
@@ -30,16 +30,14 @@
     "params": {}
   },
   "policy": {
-    "type": "multivar_normal_with_linear_parametrization",
+    "type": "multivar_normal_with_mlp_parametrization",
     "params": {
         "cov_lower_cap": 0.05
     }
   },
   "adv_estimator": {
-    "type": "future_traj_reward",
-    "params": {
-      "gamma": 0.95
-    }
+    "type": "total_traj_reward",
+    "params": {}
   },
   "optimizer": {
     "type": "adabelief",

@@ -165,6 +165,14 @@ def main(config):
                 path = os.path.join(save_to, f'{filename}-{disambiguator_idx}.json')
                 disambiguator += 1
 
+        #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        #TODO: Temporary, remove
+        import matplotlib.pyplot as plt
+        plt.plot(range(n_iters), algo_stats['reward_mean'])
+        plt.savefig(f'/tmp/{timestamp}_{algorithm_config["type"]}_plot.png')
+        #DONE
+        #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
         saved_dict.update(algo_stats)
         with open(path, 'w') as file:
             json.dump(saved_dict, file, cls=SimpleNumpyToJSONEncoder)

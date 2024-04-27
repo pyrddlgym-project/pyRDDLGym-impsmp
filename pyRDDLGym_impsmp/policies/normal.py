@@ -54,6 +54,7 @@ class MultivarNormalHKParametrization:
         """Set the policy weights theta to the provided values.
         The provided theta must have the same PyTree shape as
         the policy theta"""
+        #TODO: This gets confused by theta formatted as {'key': [[a], [b]]}
         self.theta = jax.tree_util.tree_map(jnp.array, theta)
 
     def apply(self, key, theta, state):
@@ -180,6 +181,10 @@ class MultivarNormalHKParametrization:
 
     def analytic_diagonal_of_jacobian_traj(self, key, theta, states, actions):
         """Please see the docstring for `autodiff_diagonal_of_jacobian`"""
+        raise NotImplementedError
+
+    def print_report(self, it):
+        """Prints out policy information"""
         raise NotImplementedError
 
 
@@ -313,33 +318,107 @@ class MultivarNormalLinearParametrization(MultivarNormalHKParametrization):
             'b': dJ_b
         }}
 
+    def print_report(self, it):
+        """Prints out policy information"""
+        print(f'\tPolicy :: Normal (Linear with bias) n_params={self.n_params}')
+
 
 
 class MultivarNormalMLPParametrization(MultivarNormalHKParametrization):
-    """ MLP with 32x32 hidden nodes parametrization for horizon=1 problems.
-
-    The implementation is incomplete: the functions that compute the
-    diagonal of the jacobian need to be implemented.
+    """Normal policy parametrization, where the means vector m and covariance
+    matrix diagonal diag(Sigma) are parametrized by an MLP as a function of
+    the state vector.
     """
-    def __init__(self, key, state_dim, action_dim, bijector, compute_jacobians_analytically=False):
+    def __init__(self,
+                 key,
+                 state_dim,
+                 action_dim,
+                 bijector,
+                 cov_lower_cap,
+                 compute_jacobians_analytically=False):
+
         super().__init__(
             key=key,
-            state_dim=-1,
+            state_dim=state_dim,
             action_dim=action_dim,
             bijector=bijector,
             compute_jacobians_analytically=compute_jacobians_analytically)
+
+        self.cov_lower_cap = cov_lower_cap
 
         def pi(input):
             mlp = hk.Sequential([
                 hk.Linear(32), jax.nn.relu,
                 hk.Linear(32), jax.nn.relu,
-                hk.Linear(2)
+                hk.Linear(2 * action_dim)
             ])
             output = mlp(input)
-            mean, cov = output.T
+            mean, cov = jnp.split(output, 2, axis=-1)
             cov = jax.nn.softplus(cov)
-            cov = jnp.diag(cov)
-            return mean, cov
+            cov = jnp.maximum(cov, self.cov_lower_cap)
+            cov_diag = jnp.apply_along_axis(jnp.diag, axis=-1, arr=cov)
+            return mean, cov_diag
+
+        dummy_state_input = jnp.ones(shape=(state_dim,)) # used for initializing parameters theta
+        self.pi = hk.transform(pi)
+        self.theta = self.pi.init(key, dummy_state_input)
+        self.n_params = sum(leaf.flatten().shape[0] for leaf in jax.tree_util.tree_leaves(self.theta))
+
+    def apply(self, key, theta, state):
+        return self.pi.apply(theta, key, state)
+
+    def autodiff_diagonal_of_jacobian(self, key, theta, s, a):
+        """Please see the base class.
+
+        The input states and actions should have shape
+
+            (n_params, state_dim)
+            (n_params, action_dim)
+
+        respectively. For other shapes, vmap over the left indices (e.g. batch index).
+        """
+        raise NotImplementedError
+        dpi = jax.jacrev(self.pdf, argnums=1)(key, theta, s, a)
+        dpi_w = dpi['linear']['w'].reshape(-1, 2 * self.state_dim * self.action_dim)
+        dpi_b = dpi['linear']['b'].reshape(-1, 2 * self.action_dim)
+        dpi_matrix = jnp.concatenate([dpi_w, dpi_b], axis=-1)
+        return jnp.diagonal(dpi_matrix)
+
+    def autodiff_diagonal_of_jacobian_traj(self, key, theta, states, actions):
+        """Please see the base class.
+
+        The input state and action trajectories should have shape
+
+            (n_params, horizon, state_dim)
+            (n_params, horizon, action_dim)
+
+        respectively. For other shapes, vmap over the left indices (e.g. batch index)
+        """
+        raise NotImplementedError
+        dpi = jax.jacrev(self.pdf_traj, argnums=1)(key, theta, states, actions)
+        dpi_w = dpi['linear']['w'].reshape(-1, 2 * self.state_dim * self.action_dim)
+        dpi_b = dpi['linear']['b'].reshape(-1, 2 * self.action_dim)
+        dpi_matrix = jnp.concatenate([dpi_w, dpi_b], axis=-1)
+        return jnp.diagonal(dpi_matrix)
+
+    def analytic_diagonal_of_jacobian(self, key, theta, s, a):
+        """Please see the base class and the docstring for `autodiff_diagonal_of_jacobian`"""
+        raise NotImplementedError
+
+    def analytic_diagonal_of_jacobian_traj(self, key, theta, states, actions):
+        """Please see the base class and the docstring for `autodiff_diagonal_of_jacobian`.
+        Applies `analytic_diagonal_of_jacobian` and the product rule."""
+        raise NotImplementedError
+
+    def unflatten_dJ(self, dJ):
+        """Converts a flattened dJ back into a PyTree of same shape as the policy
+        parameters object theta, (which is the required format for updating theta)
+        """
+        raise NotImplementedError
+
+    def print_report(self, it):
+        """Prints out policy information"""
+        print(f'\tPolicy :: Normal (MLP [32, 32]) n_params={self.n_params}')
 
 
 
@@ -365,9 +444,10 @@ if __name__ == '__main__':
         B = test_sample_size
         P = test_policy.n_params
         T = horizon
+        S = state_dim
 
-        state_mean = jnp.zeros((B, P, T, state_dim))
-        state_cov = jnp.diag(jnp.ones(state_dim))
+        state_mean = jnp.zeros((B, P, T, S))
+        state_cov = jnp.diag(jnp.ones(S))
         state_cov = jnp.stack([state_cov] * T, axis=0)
         state_cov = jnp.stack([state_cov] * P, axis=0)
         state_cov = jnp.stack([state_cov] * B, axis=0)

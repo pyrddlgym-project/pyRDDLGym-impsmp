@@ -5,8 +5,8 @@
   "seed": 3264,
   "state_dim": 5,
   "action_dim": 1,
-  "n_iters": 500,
-  "checkpoint_freq": 100,
+  "n_iters": 2500,
+  "checkpoint_freq": 500,
   "models": {
     "type": "rddl_cartpole_balance",
     "params": {
@@ -30,27 +30,28 @@
     "params": {}
   },
   "policy": {
-    "type": "multivar_normal_with_linear_parametrization",
+    "type": "multivar_normal_with_mlp_parametrization",
     "params": {
         "cov_lower_cap": 0.05
     }
   },
   "adv_estimator": {
-    "type": "future_traj_reward",
+    "type": "future_traj_reward_w_constant_baseline",
     "params": {
-      "gamma": 0.95
+      "gamma": 0.99,
+      "base_val": -90.0
     }
   },
   "optimizer": {
     "type": "adabelief",
     "params": {
-      "learning_rate": 0.05
+      "learning_rate": 0.01
     }
   },
   "algorithm": {
     "type": "reinforce",
     "params": {
-      "batch_size": 4096,
+      "batch_size": 4,
       "eval_batch_size": 32,
       "epsilon": 1e-12,
       "verbose": true

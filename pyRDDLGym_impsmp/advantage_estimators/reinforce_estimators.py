@@ -50,7 +50,7 @@ class TotalTrajRewardAdvEstimator(AdvEstimator):
         return key, advantages, estimator_state
 
     def print_report(self, it):
-        print('\tAdv.est :: Type=Total trajectory reward')
+        print('\tAdv.est :: Total trajectory reward')
 
 
 class FutureTrajRewardAdvEstimator(AdvEstimator):
@@ -71,7 +71,7 @@ class FutureTrajRewardAdvEstimator(AdvEstimator):
         return key, advantages, estimator_state
 
     def print_report(self, it):
-        print(f'\tAdv.est :: Type=Future trajectory reward :: Gamma={self.gamma:.2f}')
+        print(f'\tAdv.est :: Future trajectory reward :: Gamma={self.gamma:.2f}')
 
 
 class FutureTrajRewardWConstantBaselineAdvEstimator(AdvEstimator):
@@ -94,7 +94,7 @@ class FutureTrajRewardWConstantBaselineAdvEstimator(AdvEstimator):
         return key, advantages, estimator_state
 
     def print_report(self, it):
-        print(f'\tAdv.est :: Type=Future trajectory reward with constant baseline :: Gamma={self.gamma:.2f} :: Baseline={self.base_val:.2f}')
+        print(f'\tAdv.est :: Future trajectory reward with constant baseline :: Gamma={self.gamma:.2f} :: Baseline={self.base_val:.2f}')
 
 
 
@@ -473,3 +473,21 @@ class TDResidualAdvEstimator(AdvEstimator):
         estimator_state['V_theta'] = optax.apply_updates(estimator_state['V_theta'], updates)
 
         return key, advantages, estimator_state
+
+
+if __name__ == '__main__':
+    key = jax.random.PRNGKey(42)
+    def test_computation_of_future_discounted_traj_rewards(key, gamma, T):
+        rewards = jax.random.normal(key, (T,))
+        future_discounted_cmlt_rewards_manual = np.zeros(T)
+        for t0 in range(T):
+            cur_gamma = 1.0
+            for t1 in range(t0, T):
+                future_discounted_cmlt_rewards_manual[t0] += cur_gamma * rewards[t1]
+                cur_gamma *= gamma
+
+        future_discounted_cmlt_rewards_fn = compute_future_discounted_traj_rewards(rewards, gamma)
+        return jnp.all(jnp.isclose(future_discounted_cmlt_rewards_manual, future_discounted_cmlt_rewards_fn))
+
+    key, subkey = jax.random.split(key)
+    assert test_computation_of_future_discounted_traj_rewards(subkey, 0.99, 100)
