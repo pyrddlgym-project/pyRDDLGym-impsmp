@@ -172,7 +172,7 @@ def compute_impsamp_dJ_hat_estimate(
         pos_estimate = pos_train_densities / (pos_light_densities + epsilon)
         neg_estimate = neg_train_densities / (neg_light_densities + epsilon)
 
-        estimate = pos_weight * pos_estimate + neg_weight * neg_estimate
+        estimate = pos_weight * pos_estimate - neg_weight * neg_estimate
         return estimate
 
     key, *subkeys = jax.random.split(key, num=subsample_size+1)
@@ -234,7 +234,7 @@ def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
 def print_impsamp_report(it, algo_stats, model, policy, adv_estimator, sampler, subt0, subt1):
     """Prints out the results for the current training iteration to console"""
     print(f'Iter {it} :: Importance Sampling (with Splitting-by-Sign) :: Runtime={subt1-subt0}s')
-    print(f'\tSubsampling size={algo_stats["subsample_size"]}')
+    print(f'\tSubsample size={algo_stats["subsample_size"]}')
     model.print_report(it)
     policy.print_report(it)
     sampler.print_report(it)

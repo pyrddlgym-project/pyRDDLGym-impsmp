@@ -81,5 +81,5 @@
       "verbose": true
     }
   },
-  "save_to": null
+  "save_to": "/tmp"
 }

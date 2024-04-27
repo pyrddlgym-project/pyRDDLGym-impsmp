@@ -1,0 +1,92 @@
+{ "useGPU": false,
+  "use64bit": true,
+  "debug_nans": false,
+  "enable_jit": true,
+  "seed": 3264,
+  "state_dim": 5,
+  "action_dim": 1,
+  "n_iters": 250,
+  "checkpoint_freq": 10,
+  "models": {
+    "type": "rddl_cartpole_balance",
+    "params": {
+      "reward_shift": 0.0,
+      "dense_reward": true,
+      "solver": "adams_bashforth_5step",
+      "specs": {
+        "train_model": {
+          "is_relaxed": false,
+          "initial_state_config": {
+            "type": "dm_control",
+            "params": {}
+          },
+          "compiler_kwargs": {}
+        },
+        "sampling_model": {
+          "is_relaxed": true,
+          "initial_state_config": {
+            "type": "dm_control",
+            "params": {}
+          },
+          "compiler_kwargs": {
+            "use64bit": true,
+            "weight": 10.0
+          }
+        }
+      }
+    }
+  },
+  "bijector": {
+    "type": "identity",
+    "params": {}
+  },
+  "policy": {
+    "type": "multivar_normal_with_linear_parametrization",
+    "params": {
+        "compute_jacobians_analytically": true,
+        "cov_lower_cap": 0.05
+    }
+  },
+  "optimizer": {
+    "type": "adabelief",
+    "params": {
+      "learning_rate": 0.05
+    }
+  },
+  "algorithm": {
+    "type": "impsamp_split_by_sign",
+    "params": {
+      "batch_size": 128,
+      "subsample_size": 1,
+      "eval_batch_size": 32,
+      "sampler": {
+        "type": "hmc",
+        "params": {
+          "step_size_distribution": {
+            "type": "constant",
+            "params": {
+              "value": 0.001
+            }
+          },
+          "init_strategy": {
+            "type": "rollout_cur_policy",
+            "params": {}
+          },
+          "reinit_strategy": {
+            "type": "rollout_cur_policy",
+            "params": {}
+          },
+          "num_leapfrog_steps": 20,
+          "burnin_per_chain": 256,
+          "num_adaptation_steps": null
+        }
+      },
+      "Z_estimator_config": {
+        "n_samples": 4096
+      },
+      "epsilon": 1e-12,
+      "verbose": true
+    }
+  },
+  "save_to": "/tmp"
+}

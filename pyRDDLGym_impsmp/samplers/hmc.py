@@ -172,13 +172,17 @@ class HMCSampler:
             #TODO: Revert to previous version below once bijector fixed
             #trace_fn=lambda _, pkr: pkr.inner_results.inner_results.is_accepted)
             #@@@@ END
+
+        # record statistics
+        self.step_size = sampler_step_size
         self.acceptance_rate = jnp.mean(accepted_matrix)
-        return key, (init_model_states[0], sampled_actions[0]), accepted_matrix
+
+        # for HMC, the `non-accepted` samples are nevertheless used for computing the integral estimate
+        return key, (init_model_states[0], sampled_actions[0]), jnp.ones(accepted_matrix[0].shape, dtype=jnp.bool_)
 
     def print_report(self, it):
-        print(f'HMC :: Batch={self.B} :: Init.str.={self.config["init_strategy"]["type"]} :: Reinit.str.={self.config["reinit_strategy"]["type"]}')
-        print(f'       Burnin={self.config["burnin_per_chain"]} :: Num.leapfrog={self.config["num_leapfrog_steps"]}')
-        print(f'       Acceptance rate={self.acceptance_rate}')
+        print(f'\tHMC :: Batch={self.B} :: Init={self.config["init_strategy"]["type"]} :: Reinit={self.config["reinit_strategy"]["type"]}')
+        print(f'\t       Step size={self.step_size} :: Burnin={self.config["burnin_per_chain"]} :: Num.leapfrog={self.config["num_leapfrog_steps"]} :: Acceptance rate={self.acceptance_rate}')
 
 
 class NoUTurnSampler(HMCSampler):
@@ -216,6 +220,5 @@ class NoUTurnSampler(HMCSampler):
         return key
 
     def print_report(self, it):
-        print(f'NUTS :: Batch={self.B} :: Init.str.={self.config["init_strategy"]["type"]} :: Reinit.str.={self.config["reinit_strategy"]["type"]}')
-        print(f'        Burnin={self.config["burnin_per_chain"]} :: Max.tree depth={self.config["max_tree_depth"]}')
-        print(f'        Acceptance rate={self.acceptance_rate}')
+        print(f'\tNUTS :: Batch={self.B} :: Init={self.config["init_strategy"]["type"]} :: Reinit={self.config["reinit_strategy"]["type"]}')
+        print(f'\t        Step size={self.step_size} :: Burnin={self.config["burnin_per_chain"]} :: Max.tree depth={self.config["max_tree_depth"]} :: Acceptance rate={self.acceptance_rate}')

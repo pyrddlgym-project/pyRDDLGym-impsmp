@@ -404,6 +404,6 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
 
     def print_report(self, it):
         print(f'\tModel :: Sum-of-Half-Spaces ::'
-              f' Dim.={self.action_dim},'
+              f' Dim={self.action_dim},'
               f' Summands={self.n_summands},'
               f' Instance={self.instance_idx}')
