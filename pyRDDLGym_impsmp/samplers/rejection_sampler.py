@@ -137,7 +137,7 @@ class FixedNumProposedRejectionSampler(BaseRejectionSampler):
         pass
 
     def print_report(self, it):
-        print(f'Rejection Sampler (Fixed num. proposals)'
+        print(f'\tRejection Sampler (Fixed num. proposals)'
               f' :: Batch size={self.batch_size}'
               f' :: Rej.rate cur.val={self.rejection_rate},'
               f' sched.type={self.rejection_rate_type}'
@@ -240,7 +240,7 @@ class FixedNumSampledRejectionSampler(BaseRejectionSampler):
         pass
 
     def print_report(self, it):
-        print(f'Rejection Sampler (Fixed num. acceptances)'
+        print(f'\tRejection Sampler (Fixed num. acceptances)'
               f' :: Batch size={self.batch_size}'
               f' :: Rej.rate cur.val={self.rejection_rate},'
               f' sched.type={self.rejection_rate_type}'

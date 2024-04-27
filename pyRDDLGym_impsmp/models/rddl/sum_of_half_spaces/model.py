@@ -130,6 +130,7 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
         self.state_dim = action_dim # True for SumOfHalfSpaces
         self.action_dim = action_dim
         self.n_summands = n_summands
+        self.instance_idx = instance_idx
         assert self.action_dim == self.rddl_env.max_allowed_actions
 
         # compile rollouts
@@ -137,6 +138,7 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
             self.compile_relaxed(compiler_kwargs)
         else:
             self.compile(compiler_kwargs)
+        self.is_relaxed = is_relaxed
 
         assert initial_state_config['type'] in VALID_INITIALIZATION_STRATEGIES
         self.initial_state_config = initial_state_config
@@ -399,3 +401,9 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
         _, batch_states, batch_actions, batch_rewards = jax.vmap(
             self.evaluate_action_trajectory, (0, 0, 0, None), (0, 0, 0, 0))(subkeys, batch_init_states, batch_actions, shift_reward)
         return key, batch_states, batch_actions, batch_rewards
+
+    def print_report(self, it):
+        print(f'\tModel :: Sum-of-Half-Spaces ::'
+              f' Dim.={self.action_dim},'
+              f' Summands={self.n_summands},'
+              f' Instance={self.instance_idx}')

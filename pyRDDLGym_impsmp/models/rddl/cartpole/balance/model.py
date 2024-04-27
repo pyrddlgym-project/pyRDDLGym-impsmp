@@ -165,6 +165,7 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
             self.compile_relaxed(compiler_kwargs)
         else:
             self.compile(compiler_kwargs)
+        self.is_relaxed = is_relaxed
 
         assert initial_state_config['type'] in VALID_INITIALIZATION_STRATEGIES
         self.initial_state_config = initial_state_config
@@ -447,3 +448,8 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
             self.evaluate_action_trajectory, (0, 0, 0, None), (0, 0, 0, 0))(
                 subkeys, batch_init_states, batch_actions, shift_reward)
         return key, batch_states, batch_actions, batch_rewards
+
+    def print_report(self, it):
+        print(f'\tModel :: CartPole (Balance) ::'
+              f' Dense Rew.={self.dense_reward},'
+              f' Solver={self.solver}')

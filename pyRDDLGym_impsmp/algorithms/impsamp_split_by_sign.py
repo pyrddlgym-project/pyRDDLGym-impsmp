@@ -231,11 +231,13 @@ def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
         algo_stats['reward_std'][it] / jnp.sqrt(eval_batch_size))
     return key, algo_stats
 
-def print_impsamp_report(it, algo_stats, sampler, subt0, subt1):
+def print_impsamp_report(it, algo_stats, model, policy, adv_estimator, sampler, subt0, subt1):
     """Prints out the results for the current training iteration to console"""
     print(f'Iter {it} :: Importance Sampling (with Splitting-by-Sign) :: Runtime={subt1-subt0}s')
-    print(f'\tSubsampling size={algo_stats["subsample_size"]})
-    print(f'\t{sampler.print_report(it)}')
+    print(f'\tSubsampling size={algo_stats["subsample_size"]}')
+    model.print_report(it)
+    policy.print_report(it)
+    sampler.print_report(it)
     print(f'\tEval. reward={algo_stats["reward_mean"][it]:.3f} \u00B1 {algo_stats["reward_sterr"][it]:.3f}\n')
 
 
@@ -336,7 +338,7 @@ def impsamp(key, n_iters, checkpoint_freq,
 
         subt1 = timer()
         if verbose:
-            print_impsamp_report(it, algo_stats, sampler, subt0, subt1)
+            print_impsamp_report(it, algo_stats, sampling_model, policy, adv_estimator, sampler, subt0, subt1)
 
     algo_stats.update({
         'algorithm': 'ImpSampSplitBySign',

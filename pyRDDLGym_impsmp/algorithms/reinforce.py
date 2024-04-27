@@ -92,6 +92,7 @@ def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
 def print_reinforce_report(it, algo_stats, model, policy, adv_estimator, subt0, subt1):
     """Prints out the results for the current REINFORCE iteration to console"""
     print(f'Iter {it} :: REINFORCE :: Batch Size={algo_stats["batch_size"]} :: Runtime={subt1-subt0}s')
+    model.print_report(it)
     policy.print_report(it)
     adv_estimator.print_report(it)
     print(f'\tEval. reward={algo_stats["reward_mean"][it]:.3f} \u00B1 {algo_stats["reward_sterr"][it]:.3f}\n')

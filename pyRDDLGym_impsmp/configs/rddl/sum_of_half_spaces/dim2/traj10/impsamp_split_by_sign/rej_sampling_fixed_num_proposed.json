@@ -1,4 +1,4 @@
-{ "useGPU": true,
+{ "useGPU": false,
   "use64bit": true,
   "debug_nans": false,
   "enable_jit": true,
@@ -73,7 +73,7 @@
   "algorithm": {
     "type": "impsamp_split_by_sign",
     "params": {
-      "batch_size": 256,
+      "batch_size": 2048,
       "subsample_size": 1,
       "eval_batch_size": 32,
       "sampler": {
