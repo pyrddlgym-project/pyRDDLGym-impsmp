@@ -1,14 +1,16 @@
 """Implementation of REINFORCE with Importance Sampling.
 
-NOTE: This particular implementation does not split the densities into positive
-and negative parts. It also does not do subsampling. This implementation is
-mostly useful as a working simplest version of the algorithm.
+NOTE: This implementation partitions the sampled action trajectories
+by the sign of the `signed density` function. The positive and negative
+samples are then subsampled separately, and two separate Importance Sampling
+estimators of dJ are computed. The complete estimator of dJ is then computed
+as the weighted sum
 
-For better-performing implementations, please see
+    dJ ~ (#Pos./Total) * Pos.Estimate + (#Neg./Total) * Neg.Estimate
 
-             `impsamp_signed_density`
-                       or
-             `impsamp_split_by_sign`
+The motivation is that the Importance Sampling estimators using all-positive
+or all-negative samples have lower covariance than Importance Sampling estimators
+with arbitrarily-signed samples.
 """
 import jax
 import jax.numpy as jnp
@@ -18,12 +20,11 @@ import functools
 from time import perf_counter as timer
 
 
-
 @functools.partial(jax.jit, static_argnames=('policy', 'model'))
-def unnormalized_instr_density_vector(key, policy, model, theta, init_model_states, actions):
-    """The instrumental density for parameter i is defined as
+def signed_unnormalized_instr_density_vector(key, policy, model, theta, init_model_states, actions):
+    """The signed, unnormalized instrumental density for parameter i is defined as
 
-    rho_i = | \tilde{R(tau_i)} * (\partial \pi / \partial \theta_i) (tau_i, theta) |
+        \tilde{R(tau_i)} * (\partial \pi / \partial \theta_i) (tau_i, theta)
 
     Where \tilde R denotes the cumulative reward over trajectory tau_i
     in the sampling model, and pi denotes the parametrized policy with
@@ -58,20 +59,28 @@ def unnormalized_instr_density_vector(key, policy, model, theta, init_model_stat
         key, init_model_states, actions)
     dpi = policy.diagonal_of_jacobian_traj(key, theta, states, actions)
     adv = jnp.sum(rewards, axis=1) #advantage estimate
-    density_vector = jnp.abs(adv * dpi)
+    density_vector = adv * dpi
     return density_vector
+
+
+@functools.partial(jax.jit, static_argnames=('policy', 'model'))
+def unnormalized_instr_density_vector(key, policy, model, theta, init_model_states, actions):
+    """To get a true density from the `signed` density, we take the absolute value.
+    Please also refer to the docstring of `signed_unnormalized_instr_density_vector`.
+    """
+    return jnp.abs(signed_unnormalized_instr_density_vector(key, policy, model, theta, init_model_states, actions))
 
 @functools.partial(jax.jit, static_argnames=('policy', 'model'))
 def unnormalized_log_instr_density_vector(key, policy, model, theta, init_state, actions):
-    """Please see the unnormalized_instr_density_vector docstring."""
-    density_vector = unnormalized_instr_density_vector(key, policy, model, theta, init_state, actions)
-    return jnp.log(density_vector)
+    """Please see the `unnormalized_instr_density_vector` docstring."""
+    return jnp.log(unnormalized_instr_density_vector(key, policy, model, theta, init_state, actions))
 
 
-@functools.partial(jax.jit, static_argnames=('epsilon', 'policy', 'sampling_model', 'train_model', 'Z_est_sample_size'))
+@functools.partial(jax.jit, static_argnames=('epsilon', 'policy', 'sampling_model', 'train_model',
+                                             'subsample_size', 'Z_est_sample_size'))
 def compute_impsamp_dJ_hat_estimate(
-    key, epsilon, policy, sampling_model, train_model, Z_est_sample_size,
-    theta, init_model_states, actions):
+    key, epsilon, policy, sampling_model, train_model, subsample_size, Z_est_sample_size,
+    theta, init_model_states, actions, is_accepted_matrix):
     """Given a sample of initial states and actions, computes the Importance Sampling
     estimate of dJ using the formula
 
@@ -87,6 +96,9 @@ def compute_impsamp_dJ_hat_estimate(
         sampling_model:
         train_model:
             Interfaces to the light and training environment model
+        subsample_size: Int
+            Size of subsample to draw from positive and negative
+            samples (multiplied by the number of parameters)
         Z_est_sample_size: Int
             Number of samples to draw for estimating the partition functions
         theta: Dict
@@ -112,24 +124,65 @@ def compute_impsamp_dJ_hat_estimate(
     # of the parameter shorthands
     B, P, T, A = actions.shape
 
-    def _compute_unnorm_dJ_term(key, x):
-        init_model_states, actions = x
+    key, *subkeys = jax.random.split(key, num=B+1)
+    subkeys = jnp.asarray(subkeys)
+    signed_densities = jax.vmap(signed_unnormalized_instr_density_vector, (0, None, None, None, 0, 0), 0)(
+        subkeys, policy, sampling_model, theta, init_model_states, actions)
 
-        key, light_s, light_a, light_r = sampling_model.evaluate_action_trajectory_batched(
-            key, init_model_states, actions)
-        light_adv_est = jnp.sum(light_r, axis=1)
-        light_dpi = policy.diagonal_of_jacobian_traj(key, theta, light_s, light_a)
+    def _partition_samples_for_single_parameter_by_sign(init_model_states, actions, is_accepted_matrix, signed_densities):
+        is_pos = jnp.logical_and((signed_densities >= 0), is_accepted_matrix)
+        is_neg = jnp.logical_and((signed_densities < 0), is_accepted_matrix)
 
-        key, train_s, train_a, train_r = train_model.evaluate_action_trajectory_batched(
-            key, init_model_states, actions)
-        train_adv_est = jnp.sum(train_r, axis=1)
-        train_dpi = policy.diagonal_of_jacobian_traj(key, theta, train_s, train_a)
+        pos_ind = jnp.argwhere(is_pos, size=B, fill_value=-1)[..., 0]
+        neg_ind = jnp.argwhere(is_neg, size=B, fill_value=-1)[..., 0]
 
-        dJ_term = train_adv_est * train_dpi / (jnp.abs(light_adv_est * light_dpi) + epsilon)
-        return key, dJ_term
+        pos_tot = jnp.sum(is_pos)
+        neg_tot = jnp.sum(is_neg)
+        accepted_tot = jnp.sum(is_accepted_matrix)
 
-    key, unnorm_dJ_terms = jax.lax.scan(_compute_unnorm_dJ_term, init=key, xs=(init_model_states, actions))
-    flat_unnorm_dJ_hat = jnp.mean(unnorm_dJ_terms, axis=0)
+        pos_weight = pos_tot / accepted_tot
+        neg_weight = neg_tot / accepted_tot
+
+        pos_subind = pos_ind[:subsample_size]
+        neg_subind = neg_ind[:subsample_size]
+
+        pos_init_states = jnp.take(init_model_states, pos_subind, axis=0)
+        pos_actions = jnp.take(actions, pos_subind, axis=0)
+        pos_light_densities = jnp.take(signed_densities, pos_subind, axis=0)
+
+        neg_init_states = jnp.take(init_model_states, neg_subind, axis=0)
+        neg_actions = jnp.take(actions, neg_subind, axis=0)
+        neg_light_densities = jnp.take(signed_densities, neg_subind, axis=0)
+
+        return (pos_weight, pos_init_states, pos_actions, pos_light_densities,
+                neg_weight, neg_init_states, neg_actions, neg_light_densities)
+
+    res = jax.vmap(_partition_samples_for_single_parameter_by_sign, (1, 1, 1, 1), (0, 1, 1, 1, 0, 1, 1, 1))(
+        init_model_states, actions, is_accepted_matrix, signed_densities)
+    (pos_weight, pos_init_states, pos_actions, pos_light_densities,
+     neg_weight, neg_init_states, neg_actions, neg_light_densities) = res
+
+
+    def _compute_dJ_estimate_terms(key, pos_weight, pos_init_states, pos_actions, pos_light_densities,
+                                        neg_weight, neg_init_states, neg_actions, neg_light_densities):
+        key, subkey = jax.random.split(key)
+        pos_train_densities = signed_unnormalized_instr_density_vector(subkey, policy, train_model, theta, pos_init_states, pos_actions)
+        neg_train_densities = signed_unnormalized_instr_density_vector(subkey, policy, train_model, theta, neg_init_states, neg_actions)
+
+        pos_estimate = pos_train_densities / (pos_light_densities + epsilon)
+        neg_estimate = neg_train_densities / (neg_light_densities + epsilon)
+
+        estimate = pos_weight * pos_estimate + neg_weight * neg_estimate
+        return estimate
+
+    key, *subkeys = jax.random.split(key, num=subsample_size+1)
+    subkeys = jnp.asarray(subkeys)
+    estimates = jax.vmap(_compute_dJ_estimate_terms, (0, None, 0, 0, 0, None, 0, 0, 0), 0)(
+                    subkeys,
+                    pos_weight, pos_init_states, pos_actions, pos_light_densities,
+                    neg_weight, neg_init_states, neg_actions, neg_light_densities)
+
+    flat_unnorm_dJ_hat = jnp.mean(estimates, axis=0)
 
     # estimate the partition functions Z_i for each instrumental density
     Z_init_states = init_model_states.reshape(B * P, -1)
@@ -180,14 +233,18 @@ def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
 
 def print_impsamp_report(it, algo_stats, sampler, subt0, subt1):
     """Prints out the results for the current training iteration to console"""
-    print(f'Iter {it} :: Importance Sampling :: Runtime={subt1-subt0}s')
-    sampler.print_report(it)
-    print(f'Eval. reward={algo_stats["reward_mean"][it]:.3f} \u00B1 {algo_stats["reward_sterr"][it]:.3f}\n')
+    print(f'Iter {it} :: Importance Sampling (with Splitting-by-Sign) :: Runtime={subt1-subt0}s')
+    print(f'\tSubsampling size={algo_stats["subsample_size"]})
+    print(f'\t{sampler.print_report(it)}')
+    print(f'\tEval. reward={algo_stats["reward_mean"][it]:.3f} \u00B1 {algo_stats["reward_sterr"][it]:.3f}\n')
 
 
 def impsamp(key, n_iters, checkpoint_freq,
             config, bijector, policy, sampler, optimizer, models, adv_estimator, adv_estimator_state):
-    """Runs the REINFORCE with Importance Sampling algorithm"""
+    """Runs the REINFORCE with Importance Sampling algorithm.
+
+    Splits the generated samples by the sign of the `signed density`.
+    """
 
     sampling_model = models['sampling_model']
     train_model = models['train_model']
@@ -205,6 +262,7 @@ def impsamp(key, n_iters, checkpoint_freq,
     S = policy.state_dim
     A = policy.action_dim
 
+    subsample_size = config['subsample_size']
     eval_batch_size = config['eval_batch_size']
 
     Z_estimator_config = config['Z_estimator_config']
@@ -217,10 +275,11 @@ def impsamp(key, n_iters, checkpoint_freq,
         'action_dim': A,
         'state_dim': S,
         'batch_size': B,
+        'subsample_size': subsample_size,
         'eval_batch_size': eval_batch_size,
-        'reward_mean':        jnp.empty(shape=(n_iters,)),
-        'reward_std':         jnp.empty(shape=(n_iters,)),
-        'reward_sterr':       jnp.empty(shape=(n_iters,)),
+        'reward_mean':  jnp.empty(shape=(n_iters,)),
+        'reward_std':   jnp.empty(shape=(n_iters,)),
+        'reward_sterr': jnp.empty(shape=(n_iters,)),
     }
 
     # initialize optimizer
@@ -268,8 +327,8 @@ def impsamp(key, n_iters, checkpoint_freq,
             break
 
         key, dJ_hat, batch_stats = compute_impsamp_dJ_hat_estimate(
-            key, epsilon, policy, sampling_model, train_model, Z_estimator_config['n_samples'],
-            policy.theta, init_model_states, actions)
+            key, epsilon, policy, sampling_model, train_model, subsample_size, Z_estimator_config['n_samples'],
+            policy.theta, init_model_states, actions, is_accepted_matrix)
 
         # update the policy
         updates, opt_state = optimizer.update(dJ_hat, opt_state)
@@ -280,7 +339,7 @@ def impsamp(key, n_iters, checkpoint_freq,
             print_impsamp_report(it, algo_stats, sampler, subt0, subt1)
 
     algo_stats.update({
-        'algorithm': 'ImpSamp',
+        'algorithm': 'ImpSampSplitBySign',
         'n_iters': n_iters,
         'config': config,
         'policy_theta': policy.theta

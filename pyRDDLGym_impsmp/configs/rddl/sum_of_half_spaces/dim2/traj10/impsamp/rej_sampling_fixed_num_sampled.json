@@ -74,7 +74,6 @@
     "type": "impsamp",
     "params": {
       "batch_size": 4,
-      "n_parallel_sampler_chains": 1,
       "eval_batch_size": 32,
       "sampler": {
         "type": "fixed_num_sampled_rejection_sampler",

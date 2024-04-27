@@ -1,4 +1,3 @@
 import pyRDDLGym_impsmp.algorithms.reinforce
 import pyRDDLGym_impsmp.algorithms.impsamp
-#import pyRDDLGym_impsmp.algorithms.impsmp_per_parameter
-#import pyRDDLGym_impsmp.algorithms.impsmp_per_parameter_signed
+import pyRDDLGym_impsmp.algorithms.impsamp_split_by_sign

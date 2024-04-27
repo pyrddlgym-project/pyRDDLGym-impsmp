@@ -71,10 +71,10 @@
     }
   },
   "algorithm": {
-    "type": "impsamp",
+    "type": "impsamp_split_by_sign",
     "params": {
-      "batch_size": 4,
-      "n_parallel_sampler_chains": 1,
+      "batch_size": 256,
+      "subsample_size": 1,
       "eval_batch_size": 32,
       "sampler": {
         "type": "fixed_num_proposed_rejection_sampler",

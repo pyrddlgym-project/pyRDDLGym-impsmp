@@ -23,7 +23,7 @@ advantage_estimator_lookup_table = {
 algorithm_lookup_table = {
     'reinforce': pyRDDLGym_impsmp.algorithms.reinforce.reinforce,
     'impsamp': pyRDDLGym_impsmp.algorithms.impsamp.impsamp,
-#    'impsmp_per_parameter_signed': pyRDDLGym_impsmp.algorithms.impsmp_per_parameter_signed.impsmp_per_parameter_signed,
+    'impsamp_split_by_sign': pyRDDLGym_impsmp.algorithms.impsamp_split_by_sign.impsamp,
 }
 
 bijector_lookup_table = {
