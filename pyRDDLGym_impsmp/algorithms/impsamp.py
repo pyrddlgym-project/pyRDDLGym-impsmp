@@ -261,7 +261,7 @@ def impsamp(key, n_iters, checkpoint_freq,
                            step_size=sampler_step_size)
 
         try:
-            key, (init_model_states, actions), accepted_matrix = sampler.sample(
+            key, (init_model_states, actions), is_accepted_matrix = sampler.sample(
                 key, policy.theta, init_model_states, sampler_step_size, sampler_init_states)
         except FloatingPointError as e:
             warnings.warn(f'[impsamp] Iteration {it}. Caught FloatingPointError exception during sampling')

@@ -71,6 +71,6 @@ policy_lookup_table = {
 sampler_lookup_table = {
     'hmc': pyRDDLGym_impsmp.samplers.hmc.HMCSampler,
     'nuts': pyRDDLGym_impsmp.samplers.hmc.NoUTurnSampler,
-    'fixed_num_trials_rejection_sampler': pyRDDLGym_impsmp.samplers.rejection_sampler.FixedNumTrialsRejectionSampler,
-    'fixed_num_accepted_rejection_sampler': pyRDDLGym_impsmp.samplers.rejection_sampler.FixedNumAcceptedRejectionSampler,
+    'fixed_num_proposed_rejection_sampler': pyRDDLGym_impsmp.samplers.rejection_sampler.FixedNumProposedRejectionSampler,
+    'fixed_num_sampled_rejection_sampler': pyRDDLGym_impsmp.samplers.rejection_sampler.FixedNumSampledRejectionSampler,
 }

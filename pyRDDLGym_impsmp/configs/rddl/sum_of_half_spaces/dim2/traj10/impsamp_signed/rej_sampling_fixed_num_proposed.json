@@ -77,7 +77,7 @@
       "n_parallel_sampler_chains": 1,
       "eval_batch_size": 32,
       "sampler": {
-        "type": "fixed_num_accepted_rejection_sampler",
+        "type": "fixed_num_proposed_rejection_sampler",
         "params": {
           "proposal_pdf_type": "rollout_cur_policy",
           "rejection_rate_schedule": {
