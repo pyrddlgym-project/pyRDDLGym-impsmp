@@ -324,12 +324,12 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
 
         # add the initial state and remove the final state
         # from the trajectory of states generated during the rollout
-        new_subs = rollouts['pvar']
+        new_subs = rollouts['fluents']
         truncated_state_traj = jnp.stack([
             new_subs['pos'][0, :-1], new_subs['ang-cos'][0, :-1], new_subs['ang-sin'][0, :-1],
             new_subs['vel'][0, :-1], new_subs['ang-vel'][0, :-1]], axis=1)
         states = jnp.concatenate([init_state[jnp.newaxis, :], truncated_state_traj], axis=0)
-        actions = rollouts['action']['force'][0, :, jnp.newaxis]
+        actions = rollouts['fluents']['force'][0, :, jnp.newaxis]
         # shift rewards if required
         rewards = -rollouts['reward'][0] + shift_reward * self.reward_shift_val
         return key, states, actions, rewards
@@ -406,7 +406,7 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
 
         # add the initial state and remove the final state
         # from the trajectory of states generated during the rollout
-        new_subs = rollouts['pvar']
+        new_subs = rollouts['fluents']
         truncated_state_traj = jnp.stack([
             new_subs['pos'][0, :-1], new_subs['ang-cos'][0, :-1], new_subs['ang-sin'][0, :-1],
             new_subs['vel'][0, :-1], new_subs['ang-vel'][0, :-1]], axis=1)

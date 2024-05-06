@@ -292,9 +292,9 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
 
         # add the initial state and remove the final state
         # from the trajectory of states generated during the rollout
-        truncated_state_traj = rollouts['pvar']['s'][0, :-1]
+        truncated_state_traj = rollouts['fluents']['s'][0, :-1]
         states = jnp.concatenate([init_states[jnp.newaxis, :], truncated_state_traj], axis=0)
-        actions = rollouts['action']['a'][0]
+        actions = rollouts['fluents']['a'][0]
         # shift rewards if required
         rewards = rollouts['reward'][0] + shift_reward * self.reward_shift_val
 
@@ -364,7 +364,7 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
 
         # add the initial state and remove the final state
         # from the trajectory of states generated during the rollout
-        states = jnp.concatenate((init_state[jnp.newaxis, :], rollouts['pvar']['s'][0, :-1]), axis=0)
+        states = jnp.concatenate((init_state[jnp.newaxis, :], rollouts['fluents']['s'][0, :-1]), axis=0)
         # shift rewards if required
         rewards = rollouts['reward'][0] + shift_reward * self.reward_shift_val
 

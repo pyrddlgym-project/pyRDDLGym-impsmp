@@ -6,7 +6,7 @@ samples are then subsampled separately, and two separate Importance Sampling
 estimators of dJ are computed. The complete estimator of dJ is then computed
 as the weighted sum
 
-    dJ ~ (#Pos./Total) * Pos.Estimate + (#Neg./Total) * Neg.Estimate
+    dJ ~ (#Pos./Total) * Pos.Estimate - (#Neg./Total) * Neg.Estimate
 
 The motivation is that the Importance Sampling estimators using all-positive
 or all-negative samples have lower covariance than Importance Sampling estimators
