@@ -190,7 +190,7 @@ def compute_impsamp_dJ_hat_estimate(
     def _compute_Z_estimate_term(key, x):
         init_state = x
 
-        key, states, actions, rewards = sampling_model.rollout_parametrized_policy(key, init_state, policy.theta)
+        key, states, actions, rewards = sampling_model.rollout_parametrized_policy(key, init_state, policy, policy.theta)
 
         key, *subkeys = jax.random.split(key, num=3)
         pi = policy.pdf_traj(subkeys[0], policy.theta, states[jnp.newaxis, ...], actions[jnp.newaxis, ...])
@@ -222,7 +222,7 @@ def compute_impsamp_dJ_hat_estimate(
 def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
     key, init_model_states = model.generate_initial_state_batched(key, (eval_batch_size,))
     key, states, actions, rewards = model.rollout_parametrized_policy_batched(
-        key, init_model_states, theta)
+        key, init_model_states, policy, theta)
     rewards = jnp.sum(rewards, axis=1) # sum rewards along the time axis
 
     algo_stats['reward_mean']  = algo_stats['reward_mean'].at[it].set(jnp.mean(rewards))

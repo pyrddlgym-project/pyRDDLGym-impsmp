@@ -35,6 +35,7 @@ model_lookup_table = {
     'rddl_sum_of_half_spaces': pyRDDLGym_impsmp.models.rddl.sum_of_half_spaces.model.RDDLSumOfHalfSpacesModel,
     'rddl_cartpole_balance': pyRDDLGym_impsmp.models.rddl.cartpole.balance.model.RDDLCartpoleBalanceModel,
     'mujoco_cartpole_balance': pyRDDLGym_impsmp.models.mujoco.cartpole.balance.model.MuJoCoCartpoleBalanceModel,
+    'purejax_sum_of_half_spaces': pyRDDLGym_impsmp.models.purejax.sum_of_half_spaces.model.JAXSumOfHalfSpacesModel,
 #    'rddl_inflow_calibration': pyRDDLGym.Examples.Traffic.Calibration.instances.inflow_calibration_models.InflowCalibrationModel,
 }
 

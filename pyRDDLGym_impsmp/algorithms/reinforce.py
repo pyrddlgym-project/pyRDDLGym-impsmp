@@ -53,7 +53,7 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, epsilon, policy, m
         """Generates a single summand in the expression for the dJ estimator"""
         key, adv_estimator_state = init
         key, init_states = model.generate_initial_state_batched(key, ())
-        key, states, actions, rewards = model.rollout_parametrized_policy(key, init_states, theta)
+        key, states, actions, rewards = model.rollout_parametrized_policy(key, init_states, policy, theta)
         key, advantages, adv_estimator_state = adv_estimator.estimate(key, states, actions, rewards, adv_estimator_state)
         pi_inv = 1 / (policy.pdf(key, theta, states, actions) + epsilon)
         dpi = jacobian(key, theta, states, actions)
@@ -78,8 +78,8 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, epsilon, policy, m
 
 @functools.partial(jax.jit, static_argnames=('eval_batch_size', 'policy', 'model'))
 def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
-    key, init_states = model.generate_initial_state_batched(key, (eval_batch_size,))
-    key, states, actions, rewards = model.rollout_parametrized_policy_batched(key, init_states, theta)
+    key, init_state_batch = model.generate_initial_state_batched(key, (eval_batch_size,))
+    key, states, actions, rewards = model.rollout_parametrized_policy_batched(key, init_state_batch, policy, theta)
     rewards = jnp.sum(rewards, axis=1) # sum rewards along the time axis
     key, subkey = jax.random.split(key)
     policy_mean, policy_cov = policy.apply(subkey, theta, states)

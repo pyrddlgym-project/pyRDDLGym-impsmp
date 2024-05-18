@@ -1,17 +1,17 @@
-{ "useGPU": false,
+{ "useGPU": true,
   "use64bit": true,
-  "debug_nans": true,
+  "debug_nans": false,
   "enable_jit": true,
   "seed": 3264,
   "state_dim": 2,
   "action_dim": 2,
-  "n_iters": 50,
+  "n_iters": 100,
   "checkpoint_freq": 10,
   "models": {
-    "type": "rddl_sum_of_half_spaces",
+    "type": "purejax_sum_of_half_spaces",
     "params": {
       "n_summands": 10,
-      "instance_idx": 0,
+      "horizon": 10,
       "reward_shift": 0.0,
       "specs": {
         "train_model": {
@@ -23,9 +23,9 @@
               "scale": 2.0
             }
           },
-          "compiler_kwargs": {}
+          "relaxation_kwargs": {}
         },
-        "eval_model": {
+        "sampling_model": {
           "is_relaxed": false,
           "initial_state_config": {
             "type": "normal",
@@ -34,7 +34,10 @@
               "scale": 2.0
             }
           },
-          "compiler_kwargs": {}
+          "relaxation_kwargs": {
+            "use64bit": true,
+            "weight": 10.0
+          }
         }
       }
     }
@@ -50,10 +53,6 @@
         "cov_lower_cap": 0.05
     }
   },
-  "adv_estimator": {
-    "type": "total_traj_reward",
-    "params": {}
-  },
   "optimizer": {
     "type": "adabelief",
     "params": {
@@ -61,10 +60,25 @@
     }
   },
   "algorithm": {
-    "type": "reinforce",
+    "type": "impsamp",
     "params": {
-      "batch_size": 24,
+      "batch_size": 4,
       "eval_batch_size": 32,
+      "sampler": {
+        "type": "fixed_num_sampled_rejection_sampler",
+        "params": {
+          "proposal_pdf_type": "rollout_cur_policy",
+          "rejection_rate_schedule": {
+            "type": "constant_value",
+            "params": {
+              "value": 100
+            }
+          }
+        }
+      },
+      "Z_estimator_config": {
+        "n_samples": 4096
+      },
       "epsilon": 1e-12,
       "verbose": true
     }

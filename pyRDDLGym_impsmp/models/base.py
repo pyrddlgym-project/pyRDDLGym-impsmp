@@ -15,12 +15,12 @@ class BaseDeterministicModel(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def rollout_parametrized_policy(self, key, init_states, theta, shift_reward=False):
+    def rollout_parametrized_policy(self, key, init_state, policy, theta, shift_reward=False):
         """Rolls out the policy with parameters theta."""
         pass
 
     @abc.abstractmethod
-    def rollout_parametrized_policy_batched(self, key, batch_init_states, theta, shift_reward=False):
+    def rollout_parametrized_policy_batched(self, key, batch_init_states, policy, theta, shift_reward=False):
         """Performs a batch of roll outs of the policy with parameters theta"""
         pass
 

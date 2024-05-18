@@ -8,10 +8,10 @@
   "n_iters": 50,
   "checkpoint_freq": 10,
   "models": {
-    "type": "rddl_sum_of_half_spaces",
+    "type": "purejax_sum_of_half_spaces",
     "params": {
       "n_summands": 10,
-      "instance_idx": 0,
+      "horizon": 10,
       "reward_shift": 0.0,
       "specs": {
         "train_model": {
@@ -23,18 +23,7 @@
               "scale": 2.0
             }
           },
-          "compiler_kwargs": {}
-        },
-        "eval_model": {
-          "is_relaxed": false,
-          "initial_state_config": {
-            "type": "normal",
-            "params": {
-              "mean": 0.0,
-              "scale": 2.0
-            }
-          },
-          "compiler_kwargs": {}
+          "relaxation_kwargs": {}
         }
       }
     }

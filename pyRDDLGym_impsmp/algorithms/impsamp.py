@@ -137,7 +137,7 @@ def compute_impsamp_dJ_hat_estimate(
     def _compute_Z_estimate_term(key, x):
         init_state = x
 
-        key, states, actions, rewards = sampling_model.rollout_parametrized_policy(key, init_state, policy.theta)
+        key, states, actions, rewards = sampling_model.rollout_parametrized_policy(key, init_state, policy, policy.theta)
 
         key, *subkeys = jax.random.split(key, num=3)
         pi = policy.pdf_traj(subkeys[0], policy.theta, states[jnp.newaxis, ...], actions[jnp.newaxis, ...])
@@ -169,7 +169,7 @@ def compute_impsamp_dJ_hat_estimate(
 def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
     key, init_model_states = model.generate_initial_state_batched(key, (eval_batch_size,))
     key, states, actions, rewards = model.rollout_parametrized_policy_batched(
-        key, init_model_states, theta)
+        key, init_model_states, policy, theta)
     rewards = jnp.sum(rewards, axis=1) # sum rewards along the time axis
 
     algo_stats['reward_mean']  = algo_stats['reward_mean'].at[it].set(jnp.mean(rewards))
@@ -178,9 +178,10 @@ def evaluate_policy(key, it, algo_stats, eval_batch_size, theta, policy, model):
         algo_stats['reward_std'][it] / jnp.sqrt(eval_batch_size))
     return key, algo_stats
 
-def print_impsamp_report(it, algo_stats, sampler, subt0, subt1):
+def print_impsamp_report(it, algo_stats, model, sampler, subt0, subt1):
     """Prints out the results for the current training iteration to console"""
     print(f'Iter {it} :: Importance Sampling :: Runtime={subt1-subt0}s')
+    model.print_report(it)
     sampler.print_report(it)
     print(f'Eval. reward={algo_stats["reward_mean"][it]:.3f} \u00B1 {algo_stats["reward_sterr"][it]:.3f}\n')
 
@@ -277,7 +278,7 @@ def impsamp(key, n_iters, checkpoint_freq,
 
         subt1 = timer()
         if verbose:
-            print_impsamp_report(it, algo_stats, sampler, subt0, subt1)
+            print_impsamp_report(it, algo_stats, train_model, sampler, subt0, subt1)
 
     algo_stats.update({
         'algorithm': 'ImpSamp',

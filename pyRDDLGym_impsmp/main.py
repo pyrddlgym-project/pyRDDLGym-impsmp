@@ -81,8 +81,9 @@ def main(config):
     models = {}
     for model_key, spec in model_specs.items():
         key, subkey = jax.random.split(key)
-        spec['compiler_kwargs']['use64bit'] = use64bit
-        spec['compiler_kwargs']['policy_sample_fn'] = policy.sample
+        if 'compiler_kwargs' in spec:
+            spec['compiler_kwargs']['use64bit'] = use64bit
+            spec['compiler_kwargs']['policy_sample_fn'] = policy.sample
         spec.update(model_params)
         models[model_key] = model_cls(
             key=subkey,

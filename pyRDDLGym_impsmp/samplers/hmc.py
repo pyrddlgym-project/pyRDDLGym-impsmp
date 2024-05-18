@@ -25,16 +25,15 @@ VALID_REINIT_STRATEGY_TYPES = (
 )
 
 @functools.partial(jax.jit, static_argnames=('target_log_prob_fn', 'num_leapfrog_steps', 'num_burnin_steps', 'num_adaptation_steps'))
-def sample_hmc(
-    key,
-    theta,
-    target_log_prob_fn,
-    init_model_states,
-    sampler_step_size,
-    sampler_init_state,
-    num_leapfrog_steps,
-    num_burnin_steps,
-    num_adaptation_steps):
+def sample_hmc(key,
+               theta,
+               target_log_prob_fn,
+               init_model_states,
+               sampler_step_size,
+               sampler_init_state,
+               num_leapfrog_steps,
+               num_burnin_steps,
+               num_adaptation_steps):
 
     hmc_sampler = tfp.mcmc.HamiltonianMonteCarlo(
         target_log_prob_fn=target_log_prob_fn,
@@ -70,16 +69,15 @@ def sample_hmc(
 
 
 @functools.partial(jax.jit, static_argnames=('target_log_prob_fn', 'max_tree_depth', 'num_burnin_steps', 'num_adaptation_steps'))
-def sample_nuts(
-    key,
-    theta,
-    target_log_prob_fn,
-    init_model_states,
-    sampler_step_size,
-    sampler_init_state,
-    max_tree_depth,
-    num_burnin_steps,
-    num_adaptation_steps):
+def sample_nuts(key,
+                theta,
+                target_log_prob_fn,
+                init_model_states,
+                sampler_step_size,
+                sampler_init_state,
+                max_tree_depth,
+                num_burnin_steps,
+                num_adaptation_steps):
 
     nuts = tfp.mcmc.NoUTurnSampler(
         target_log_prob_fn=target_log_prob_fn,
@@ -246,10 +244,11 @@ class HMCSampler:
 
     def print_report(self, it):
         print(f'\tHMC :: Batch={self.B} :: Init={self.config["init_strategy"]["type"]} :: Reinit={self.config["reinit_strategy"]["type"]}')
-        print(f'\t       Step size={self.stats["step_size"]} :: Burnin={self.config["burnin_per_chain"]} :: Num.leapfrog={self.config["num_leapfrog_steps"]} :: Acceptance rate={self.stats["acceptance_rate"]}')
+        print(f'\t       Step size={self.stats["step_size"]} :: Burnin={self.config["burnin_per_chain"]} :: Num.leapfrog={self.config["num_leapfrog_steps"]} :: Acceptance rate={self.stats["acceptance_rate"]:.3f}')
 
 
 class NoUTurnSampler(HMCSampler):
+
     def sample(self, key, theta, init_model_states, sampler_step_size, sampler_init_state):
         max_tree_depth = self.config['max_tree_depth']
         num_burnin_steps = self.config['burnin_per_chain']
@@ -271,4 +270,4 @@ class NoUTurnSampler(HMCSampler):
 
     def print_report(self, it):
         print(f'\tNUTS :: Batch={self.B} :: Init={self.config["init_strategy"]["type"]} :: Reinit={self.config["reinit_strategy"]["type"]}')
-        print(f'\t        Step size={self.stats["step_size"]} :: Burnin={self.config["burnin_per_chain"]} :: Max.tree depth={self.config["max_tree_depth"]} :: Acceptance rate={self.stats["acceptance_rate"]}')
+        print(f'\t        Step size={self.stats["step_size"]} :: Burnin={self.config["burnin_per_chain"]} :: Max.tree depth={self.config["max_tree_depth"]} :: Acceptance rate={self.stats["acceptance_rate"]:.3f}')
