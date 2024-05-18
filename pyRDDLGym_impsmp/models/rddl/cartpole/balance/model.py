@@ -284,7 +284,7 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
         init_states = generate_initial_states(subkey, self.initial_state_config, batch_shape, self.state_dim)
         return key, init_states
 
-    def rollout_parametrized_policy(self, key, init_state, theta, shift_reward=False):
+    def rollout_parametrized_policy(self, key, init_state, policy, theta, shift_reward=False):
         """Rolls out the policy with parameters theta.
 
         Args:
@@ -292,6 +292,10 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
                 Random key
             init_state: jnp.array shape=(state_dim,)
                 Initial state
+            policy
+                Static policy configuration parameters.
+                Not used, included to have a consistent interface
+                with that of other environments
             theta: PyTree
                 Current policy parameters
             shift_reward: Boolean
@@ -334,7 +338,7 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
         rewards = -rollouts['reward'][0] + shift_reward * self.reward_shift_val
         return key, states, actions, rewards
 
-    def rollout_parametrized_policy_batched(self, key, batch_init_states, theta, shift_reward=False):
+    def rollout_parametrized_policy_batched(self, key, batch_init_states, policy, theta, shift_reward=False):
         """Runs `rollout_parametrized_policy` vectorized over a batch axis.
 
         Args:
@@ -342,6 +346,10 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
                 Random generator state key
             batch_init_states: jnp.array shape=(batch_size, state_dim)
                 Batch of initial states
+            policy
+                Static policy configuration parameters.
+                Not used, included to have a consistent interface
+                with that of other environments
             theta: PyTree
                 Current policy parameters
             shift_reward: Boolean
@@ -360,8 +368,8 @@ class RDDLCartpoleBalanceModel(BaseDeterministicModel):
         key, *subkeys = jax.random.split(key, num=B+1)
         subkeys = jnp.asarray(subkeys)
         _, batch_states, batch_actions, batch_rewards = jax.vmap(
-            self.rollout_parametrized_policy, (0, 0, None, None), (0, 0, 0, 0))(
-                subkeys, batch_init_states, theta, shift_reward)
+            self.rollout_parametrized_policy, (0, 0, None, None, None), (0, 0, 0, 0))(
+                subkeys, batch_init_states, policy, theta, shift_reward)
         return key, batch_states, batch_actions, batch_rewards
 
     def evaluate_action_trajectory(self, key, init_state, actions, shift_reward=False):

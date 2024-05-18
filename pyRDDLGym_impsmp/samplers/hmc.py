@@ -206,8 +206,8 @@ class HMCSampler:
             total_rollouts = self.B * self.P
             parallel_rollout_keys = jnp.asarray(jax.random.split(subkey, num=total_rollouts))
             flat_init_model_state = init_model_state.reshape(total_rollouts, self.S)
-            parallel_rollout = jax.vmap(self.model.rollout_parametrized_policy, (0, 0, None), (0, 0, 0, 0))
-            _, _, sampled_actions, _ = parallel_rollout(parallel_rollout_keys, flat_init_model_state, self.policy.theta)
+            parallel_rollout = jax.vmap(self.model.rollout_parametrized_policy, (0, 0, None, None), (0, 0, 0, 0))
+            _, _, sampled_actions, _ = parallel_rollout(parallel_rollout_keys, flat_init_model_state, self.policy, self.policy.theta)
             init_state = sampled_actions.reshape(self.B, self.P, self.T, self.A)
 
         return key, init_state

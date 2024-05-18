@@ -126,9 +126,9 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
                                           instance=self.instance_file_path)
 
         self.model = self.rddl_env.model
-        self.horizon = self.rddl_env.horizon
-        self.state_dim = action_dim # True for SumOfHalfSpaces
+        self.state_dim = state_dim
         self.action_dim = action_dim
+        self.horizon = self.rddl_env.horizon
         self.n_summands = n_summands
         self.instance_idx = instance_idx
         assert self.action_dim == self.rddl_env.max_allowed_actions
@@ -258,14 +258,18 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
         init_states = generate_initial_states(subkey, self.initial_state_config, batch_shape, self.state_dim)
         return key, init_states
 
-    def rollout_parametrized_policy(self, key, init_states, theta, shift_reward=False):
+    def rollout_parametrized_policy(self, key, init_state, policy, theta, shift_reward=False):
         """Rolls out the policy with parameters theta.
 
         Args:
             key: jax.random.PRNGKey
                 Random key
-            init_states: jnp.array shape=(state_dim,)
+            init_state: jnp.array shape=(state_dim,)
                 Initial state
+            policy:
+                Static parameters of the current policy.
+                Not used and included for a consistent interface
+                with other environments
             theta: PyTree
                 Current policy parameters
             shift_reward: Boolean
@@ -280,7 +284,7 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
             rewards: jnp.array shape=(horizon,)
                 Sampled trajectory
         """
-        self.subs['s'] = init_states[jnp.newaxis, :]
+        self.subs['s'] = init_state[jnp.newaxis, :]
 
         key, subkey = jax.random.split(key)
         rollouts = self.parametrized_policy_rollout_sampler(
@@ -293,14 +297,14 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
         # add the initial state and remove the final state
         # from the trajectory of states generated during the rollout
         truncated_state_traj = rollouts['fluents']['s'][0, :-1]
-        states = jnp.concatenate([init_states[jnp.newaxis, :], truncated_state_traj], axis=0)
+        states = jnp.concatenate([init_state[jnp.newaxis, :], truncated_state_traj], axis=0)
         actions = rollouts['fluents']['a'][0]
         # shift rewards if required
         rewards = rollouts['reward'][0] + shift_reward * self.reward_shift_val
 
         return key, states, actions, rewards
 
-    def rollout_parametrized_policy_batched(self, key, batch_init_states, theta, shift_reward=False):
+    def rollout_parametrized_policy_batched(self, key, batch_init_states, policy, theta, shift_reward=False):
         """Runs `rollout_parametrized_policy` vectorized over a batch axis.
 
         Args:
@@ -308,6 +312,10 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
                 Random generator state key
             batch_init_states: jnp.array shape=(batch_size, state_dim)
                 Batch of initial states
+            policy:
+                Static parameters of the current policy.
+                Not used and included for a consistent interface
+                with other environments
             theta: PyTree
                 Current policy parameters
             shift_reward: Boolean
@@ -326,7 +334,7 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
         key, *subkeys = jax.random.split(key, num=B+1)
         subkeys = jnp.asarray(subkeys)
         _, batch_states, batch_actions, batch_rewards = jax.vmap(
-            self.rollout_parametrized_policy, (0, 0, None, None), (0, 0, 0, 0))(subkeys, batch_init_states, theta, shift_reward)
+            self.rollout_parametrized_policy, (0, 0, None, None, None), (0, 0, 0, 0))(subkeys, batch_init_states, policy, theta, shift_reward)
         return key, batch_states, batch_actions, batch_rewards
 
     def evaluate_action_trajectory(self, key, init_state, actions, shift_reward=False):
@@ -403,7 +411,8 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
         return key, batch_states, batch_actions, batch_rewards
 
     def print_report(self, it):
-        print(f'\tModel :: Sum-of-Half-Spaces ::'
+        print(f'\tModel :: Sum-of-Half-Spaces (RDDL) ::'
               f' Dim={self.action_dim},'
               f' Summands={self.n_summands},'
+              f' Horizon={self.horizon},',
               f' Instance={self.instance_idx}')
