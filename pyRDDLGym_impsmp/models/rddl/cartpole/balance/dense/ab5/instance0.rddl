@@ -18,7 +18,7 @@ instance inst_cartpole_balance_dense_ab5_0 {
     };
 
     max-nondef-actions = 1;
-    horizon  = 1000;
+    horizon  = 100; //1000
     discount = 1.0;
 }
 

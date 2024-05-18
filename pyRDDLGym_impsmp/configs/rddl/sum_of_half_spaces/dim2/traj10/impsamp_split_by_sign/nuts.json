@@ -73,30 +73,27 @@
   "algorithm": {
     "type": "impsamp_split_by_sign",
     "params": {
-      "batch_size": 4096,
+      "batch_size": 1024,
       "subsample_size": 1,
       "eval_batch_size": 32,
       "sampler": {
-        "type": "hmc",
+        "type": "nuts",
         "params": {
           "step_size_distribution": {
             "type": "constant",
             "params": {
-              "value": 0.01
+              "value": 0.05
             }
           },
           "init_strategy": {
-            "type": "uniform",
-            "params": {
-              "min": -2.0,
-              "max": 2.0
-            }
+            "type": "rollout_cur_policy",
+            "params": {}
           },
           "reinit_strategy": {
             "type": "rollout_cur_policy",
             "params": {}
           },
-          "num_leapfrog_steps": 10,
+          "max_tree_depth": 8,
           "burnin_per_chain": 128,
           "num_adaptation_steps": null
         }
