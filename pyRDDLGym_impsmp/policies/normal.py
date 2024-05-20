@@ -306,6 +306,13 @@ class MultivarNormalLinearParametrization(MultivarNormalHKParametrization):
 
         return jac_diagonal
 
+    def flatten_dJ(self, dJ):
+        """Converts a dictionary representation of a derivative of J with respect
+        to the policy parameters theta into a flattened representation"""
+        dJ_w = dJ['linear']['w'].ravel()
+        dJ_b = dJ['linear']['b'].ravel()
+        return jnp.concatenate([dJ_w, dJ_b])
+
     def unflatten_dJ(self, dJ):
         """Converts a flattened dJ back into a PyTree of same shape as the policy
         parameters object theta, (which is the required format for updating theta)

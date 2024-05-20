@@ -47,9 +47,10 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, epsilon, policy, m
         key: Mutated JAX random key
         dJ_hat: dJ estimator
         batch_stats: Dictionary of statistics for the current sample
-            'dJ': Individual summands of the dJ estimator
             'actions': Sampled actions
+            'cov': Sample covariance matrix for the dJ estimator
     """
+    # compute the estimate of the gradient of J with respect to the params theta
     jacobian = jax.jacrev(policy.pdf, argnums=1)
 
     def _compute_dJ_summand(init, _):
@@ -78,8 +79,12 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, epsilon, policy, m
     dJ_hat = jax.tree_util.tree_map(lambda term: jnp.mean(term, axis=0), dJ_summands)
 
 
+    # compute statistics for the batch
+    flattened_dJ_summands = jax.vmap(policy.flatten_dJ, 0, 0)(dJ_summands)
+    dJ_cov = jnp.cov(flattened_dJ_summands, rowvar=False)
     batch_stats = {
-        
+        'actions': actions,
+        'cov': dJ_cov
     }
     return key, dJ_hat, adv_estimator_state, batch_stats
 
@@ -125,9 +130,10 @@ def reinforce(key, n_iters, checkpoint_freq,
         'action_dim': action_dim,
         'batch_size': batch_size,
         'eval_batch_size': eval_batch_size,
-        'reward_mean':        jnp.empty(shape=(n_iters,)),
-        'reward_std':         jnp.empty(shape=(n_iters,)),
-        'reward_sterr':       jnp.empty(shape=(n_iters,)),
+        'reward_mean': jnp.empty(shape=(n_iters,)),
+        'reward_std': jnp.empty(shape=(n_iters,)),
+        'reward_sterr': jnp.empty(shape=(n_iters,)),
+        'batch_stats': [],
     }
 
     # policy checkpoints
@@ -153,6 +159,7 @@ def reinforce(key, n_iters, checkpoint_freq,
         policy.theta = optax.apply_updates(policy.theta, updates)
 
         # update statistics and print out report for current iteration
+        algo_stats['batch_stats'].append(batch_stats)
         if verbose:
             print_reinforce_report(it, algo_stats, train_model, policy, adv_estimator, subt0, timer())
 
