@@ -23,11 +23,14 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, epsilon, policy, m
 
     using the REINFORCE formula
 
-        dJ hat = 1/|B| * sum_{tau in B} [ R(tau) * grad log pi(tau) ]
+        dJ hat = 1/|B| * sum_{tau in B} [ A(tau) * grad log pi(tau) ]
 
     where
         dJ denotes the gradient of J^pi with respect to theta,
-        R(tau) = sum_{t=1}^T R(s_t, a_t)
+        A(tau) = advantage estimator over trajectory tau
+           For example, the `total trajectory reward' advantage estimator is given by
+               sum_{t=1}^T R(s_t, a_t)
+           For other types, please see pyRDDLGym_impsmp/advantage_estimators/reinforce_estimators.py
         grad log pi(tau) = sum_{t=1}^T grad log pi(s_t, a_t)
 
     Args:
@@ -55,12 +58,13 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, epsilon, policy, m
         key, init_states = model.generate_initial_state_batched(key, ())
         key, states, actions, rewards = model.rollout_parametrized_policy(key, init_states, policy, theta)
         key, advantages, adv_estimator_state = adv_estimator.estimate(key, states, actions, rewards, adv_estimator_state)
+
         pi_inv = 1 / (policy.pdf(key, theta, states, actions) + epsilon)
         dpi = jacobian(key, theta, states, actions)
         dlogpi = jax.tree_util.tree_map(lambda dpi_term: weighting_map(pi_inv, dpi_term), dpi)
         adv_weighted_dlogpi = jax.tree_util.tree_map(lambda dlogpi_term: weighting_map(advantages, dlogpi_term), dlogpi)
 
-        dJ_summands = jax.tree_util.tree_map(lambda adv_weighted_dlogpi_term: jnp.sum(adv_weighted_dlogpi_term, axis=1), adv_weighted_dlogpi)
+        dJ_summands = jax.tree_util.tree_map(lambda adv_weighted_dlogpi_term: jnp.sum(adv_weighted_dlogpi_term, axis=0), adv_weighted_dlogpi)
         carry = (key, adv_estimator_state)
         result = (actions, rewards, dJ_summands)
         return carry, result
@@ -71,9 +75,12 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, epsilon, policy, m
     (key, adv_estimator_state) = carry
     (actions, rewards, dJ_summands) = result
 
-    dJ_hat = jax.tree_util.tree_map(lambda term: jnp.mean(term, axis=(0,1)), dJ_summands)
+    dJ_hat = jax.tree_util.tree_map(lambda term: jnp.mean(term, axis=0), dJ_summands)
 
-    batch_stats = {}
+
+    batch_stats = {
+        
+    }
     return key, dJ_hat, adv_estimator_state, batch_stats
 
 @functools.partial(jax.jit, static_argnames=('eval_batch_size', 'policy', 'model'))
@@ -163,4 +170,5 @@ def reinforce(key, n_iters, checkpoint_freq,
         'best_eval_checkpoint': best_eval_checkpoint,
         'config': config,
     })
+
     return key, algo_stats
