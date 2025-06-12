@@ -205,9 +205,14 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
 
         self.weight = weight
 
+        fuzzy_logic = pyRDDLGym_jax.core.logic.FuzzyLogic(
+            comparison=pyRDDLGym_jax.core.logic.SigmoidComparison(weight),
+            rounding=pyRDDLGym_jax.core.logic.SoftRounding(weight),
+            control=pyRDDLGym_jax.core.logic.SoftControlFlow(weight))
+
         self.compiler = pyRDDLGym_jax.core.planner.JaxRDDLCompilerWithGrad(
             rddl=self.model,
-            logic=pyRDDLGym_jax.core.logic.FuzzyLogic(weight=weight),
+            logic=fuzzy_logic,
             use64bit=use64bit)
 
         init_state_subs = self.rddl_env.sampler.subs
@@ -296,11 +301,12 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
 
         # add the initial state and remove the final state
         # from the trajectory of states generated during the rollout
-        truncated_state_traj = rollouts['fluents']['s'][0, :-1]
+
+        truncated_state_traj = rollouts[0]['fluents']['s'][0, :-1]
         states = jnp.concatenate([init_state[jnp.newaxis, :], truncated_state_traj], axis=0)
-        actions = rollouts['fluents']['a'][0]
+        actions = rollouts[0]['fluents']['a'][0]
         # shift rewards if required
-        rewards = rollouts['reward'][0] + shift_reward * self.reward_shift_val
+        rewards = rollouts[0]['reward'][0] + shift_reward * self.reward_shift_val
 
         return key, states, actions, rewards
 
@@ -372,9 +378,9 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
 
         # add the initial state and remove the final state
         # from the trajectory of states generated during the rollout
-        states = jnp.concatenate((init_state[jnp.newaxis, :], rollouts['fluents']['s'][0, :-1]), axis=0)
+        states = jnp.concatenate((init_state[jnp.newaxis, :], rollouts[0]['fluents']['s'][0, :-1]), axis=0)
         # shift rewards if required
-        rewards = rollouts['reward'][0] + shift_reward * self.reward_shift_val
+        rewards = rollouts[0]['reward'][0] + shift_reward * self.reward_shift_val
 
         return key, states, actions, rewards
 

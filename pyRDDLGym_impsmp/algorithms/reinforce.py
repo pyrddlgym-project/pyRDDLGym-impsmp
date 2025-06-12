@@ -47,7 +47,6 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, epsilon, policy, m
         key: Mutated JAX random key
         dJ_hat: dJ estimator
         batch_stats: Dictionary of statistics for the current sample
-            'actions': Sampled actions
             'cov': Sample covariance matrix for the dJ estimator
     """
     # compute the estimate of the gradient of J with respect to the params theta
@@ -83,7 +82,6 @@ def compute_reinforce_dJ_hat_estimate(key, theta, batch_size, epsilon, policy, m
     flattened_dJ_summands = jax.vmap(policy.flatten_dJ, 0, 0)(dJ_summands)
     dJ_cov = jnp.cov(flattened_dJ_summands, rowvar=False)
     batch_stats = {
-        'actions': actions,
         'cov': dJ_cov
     }
     return key, dJ_hat, adv_estimator_state, batch_stats
@@ -133,11 +131,12 @@ def reinforce(key, n_iters, checkpoint_freq,
         'reward_mean': jnp.empty(shape=(n_iters,)),
         'reward_std': jnp.empty(shape=(n_iters,)),
         'reward_sterr': jnp.empty(shape=(n_iters,)),
-        'batch_stats': [],
+        'dJ_cov': [],
     }
 
     # policy checkpoints
     checkpoints = []
+    best_eval_it = -1
     best_eval_result = math.inf
     best_eval_checkpoint = None
 
@@ -159,21 +158,25 @@ def reinforce(key, n_iters, checkpoint_freq,
         policy.theta = optax.apply_updates(policy.theta, updates)
 
         # update statistics and print out report for current iteration
-        algo_stats['batch_stats'].append(batch_stats)
         if verbose:
             print_reinforce_report(it, algo_stats, train_model, policy, adv_estimator, subt0, timer())
 
         # checkpoint policy params as necessary
         if it > 0 and it % checkpoint_freq == 0:
             checkpoints.append(policy.theta.copy())
+            algo_stats['dJ_cov'].append(batch_stats['cov'])
         if algo_stats['reward_mean'][it] < best_eval_result:
+            best_eval_it = it
             best_eval_result = algo_stats['reward_mean'][it]
             best_eval_checkpoint = policy.theta.copy()
 
     algo_stats.update({
         'algorithm': 'REINFORCE',
         'n_iters': n_iters,
+        'checkpoint_freq': checkpoint_freq,
         'checkpoints': checkpoints,
+        'best_eval_it': best_eval_it,
+        'best_eval_result': best_eval_result,
         'best_eval_checkpoint': best_eval_checkpoint,
         'config': config,
     })
