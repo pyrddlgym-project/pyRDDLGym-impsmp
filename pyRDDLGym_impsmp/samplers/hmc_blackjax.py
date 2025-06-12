@@ -1,8 +1,10 @@
 import jax
+import numpy as np
 import jax.numpy as jnp
 import functools
 from tensorflow_probability.substrates import jax as tfp
 
+import blackjax
 
 VALID_STEP_SIZE_DISTR_TYPES = (
     'constant',
@@ -80,7 +82,7 @@ def sample_hmc(key,
         dpi = policy.diagonal_of_jacobian_traj(key, theta, states, actions)
         adv = jnp.sum(rewards, axis=1) #advantage estimate
         density_vector = adv * dpi
-        return jnp.log(jnp.abs(density_vector))
+        return jnp.sum(jnp.log(jnp.abs(density_vector)))
 
     key, subkey = jax.random.split(key)
     target_log_prob_fn = functools.partial(
@@ -89,84 +91,39 @@ def sample_hmc(key,
         policy,
         model,
         theta)
-    target_log_prob_fn_parallel_in_B = jax.vmap(target_log_prob_fn, (0, 0), 0)
 
+    target_log_prob = lambda x: target_log_prob_fn(**x)
 
-    hmc_sampler = tfp.mcmc.HamiltonianMonteCarlo(
-        target_log_prob_fn=target_log_prob_fn_parallel_in_B,
-        step_size=sampler_step_size,
-        num_leapfrog_steps=num_leapfrog_steps)
+    inv_mass_matrix =  np.ones(264) * 0.1
+    hmc = blackjax.hmc(target_log_prob, sampler_step_size, inv_mass_matrix, num_leapfrog_steps)
 
-    hmc_sampler_with_adaptive_step_size = tfp.mcmc.SimpleStepSizeAdaptation(
-        inner_kernel=hmc_sampler,
-        num_adaptation_steps=num_adaptation_steps)
+    def inference_loop(rng_key, kernel, initial_state, num_samples, num_chains):
+        @jax.jit
+        def one_step(states, rng_key):
+            keys = jax.random.split(rng_key, num_chains)
+            states, _ = jax.vmap(kernel)(keys, states)
+            return states, states
 
-    #@@@@ BEGIN
-    #TODO: Fix the bijector (only apply to 2nd arg)
-    #self.sampler = tfp.mcmc.TransformedTransitionKernel(
-    #    inner_kernel=hmc_sampler_with_adaptive_step_size,
-    #    bijector=unconstraining_bijector)
-    #@@@@ END
+        keys = jax.random.split(rng_key, num_samples)
+        _, states = jax.lax.scan(one_step, initial_state, keys)
 
-    key, subkey = jax.random.split(key)
-    (init_model_states, sampled_actions), accepted_matrix = tfp.mcmc.sample_chain(
-        num_results=1,
-        current_state=(init_model_states, sampler_init_state),
-        num_burnin_steps=num_burnin_steps,
-        kernel=hmc_sampler_with_adaptive_step_size,
-        trace_fn=lambda _, pkr: pkr.inner_results.is_accepted,
-        seed=subkey)
+        return states
 
-        #@@@@ BEGIN
-        #TODO: Revert to previous version below once bijector fixed
-        #trace_fn=lambda _, pkr: pkr.inner_results.inner_results.is_accepted)
-        #@@@@ END
+    initial_pos = {'init_model_states': init_model_states,
+                   'actions': sampler_init_state}
+    initial_state = jax.vmap(hmc.init, in_axes=(0))(initial_pos)
 
-    return key, accepted_matrix, (init_model_states[0], sampled_actions[0])
-
-
-@functools.partial(jax.jit, static_argnames=('target_log_prob_fn', 'max_tree_depth', 'num_burnin_steps', 'num_adaptation_steps'))
-def sample_nuts(key,
-                theta,
-                target_log_prob_fn,
-                init_model_states,
-                sampler_step_size,
-                sampler_init_state,
-                max_tree_depth,
-                num_burnin_steps,
-                num_adaptation_steps):
-
-    nuts = tfp.mcmc.NoUTurnSampler(
-        target_log_prob_fn=target_log_prob_fn,
-        step_size=sampler_step_size,
-        max_tree_depth=max_tree_depth)
-
-    nuts_with_adaptive_step_size = tfp.mcmc.DualAveragingStepSizeAdaptation(
-        inner_kernel=nuts,
-        num_adaptation_steps=num_adaptation_steps)
-
-    #@@@@ BEGIN
-    #TODO: Fix the bijector (only apply to 2nd arg)
-    #self.sampler = tfp.mcmc.TransformedTransitionKernel(
-    #    inner_kernel=hmc_sampler_with_adaptive_step_size,
-    #    bijector=unconstraining_bijector)
-    #@@@@ END
+    hmc_kernel = jax.jit(hmc.step)
 
     key, subkey = jax.random.split(key)
-    (init_model_states, sampled_actions), accepted_matrix = tfp.mcmc.sample_chain(
-        num_results=1,
-        current_state=(init_model_states, sampler_init_state),
-        num_burnin_steps=num_burnin_steps,
-        kernel=nuts_with_adaptive_step_size,
-        trace_fn=lambda _, pkr: pkr.inner_results.is_accepted,
-        seed=subkey)
+    states = inference_loop(subkey, hmc_kernel, initial_state, num_burnin_steps+1, 4096)
 
-        #@@@@ BEGIN
-        #TODO: Revert to previous version below once bijector fixed
-        #trace_fn=lambda _, pkr: pkr.inner_results.inner_results.is_accepted)
-        #@@@@ END
+    sampled_init_model_states = states.position['init_model_states'][num_burnin_steps:]
+    sampled_actions           = states.position['actions'][num_burnin_steps:]
 
-    return key, accepted_matrix, (init_model_states[0], sampled_actions[0])
+    accepted_matrix = jnp.ones((1, 4096, 12))
+    return key, accepted_matrix, (sampled_init_model_states, sampled_actions)
+
 
 
 
@@ -302,29 +259,3 @@ class HMCSampler:
     def print_report(self, it):
         print(f'\tHMC :: Batch={self.B} :: Init={self.config["init_strategy"]["type"]} :: Reinit={self.config["reinit_strategy"]["type"]}')
         print(f'\t       Step size={self.stats["step_size"]} :: Burnin={self.config["burnin_per_chain"]} :: Num.leapfrog={self.config["num_leapfrog_steps"]} :: Acceptance rate={self.stats["acceptance_rate"]:.3f}')
-
-
-class NoUTurnSampler(HMCSampler):
-
-    def sample(self, key, theta, init_model_states, sampler_step_size, sampler_init_state):
-        max_tree_depth = self.config['max_tree_depth']
-        num_burnin_steps = self.config['burnin_per_chain']
-        num_adaptation_steps = self.config.get('num_adaptation_steps')
-
-        if num_adaptation_steps is None:
-            num_adaptation_steps = int(num_burnin_iters_per_chain * 0.8)
-
-        key, accepted_matrix, (init_model_states, sampled_actions) = sample_nuts(
-            key, theta, self.target_log_prob_fn, init_model_states, sampler_step_size, sampler_init_state,
-            max_tree_depth, num_burnin_steps, num_adaptation_steps)
-
-        self.stats['step_size'] = sampler_step_size
-        self.stats['acceptance_rate'] = jnp.mean(accepted_matrix)
-
-        # for NUTS, the `non-accepted` samples are nevertheless used for computing the integral estimate
-        # so, return the all-ones vector as the last argument
-        return key, (init_model_states, sampled_actions), jnp.ones(accepted_matrix[0].shape, dtype=jnp.bool_)
-
-    def print_report(self, it):
-        print(f'\tNUTS :: Batch={self.B} :: Init={self.config["init_strategy"]["type"]} :: Reinit={self.config["reinit_strategy"]["type"]}')
-        print(f'\t        Step size={self.stats["step_size"]} :: Burnin={self.config["burnin_per_chain"]} :: Max.tree depth={self.config["max_tree_depth"]} :: Acceptance rate={self.stats["acceptance_rate"]:.3f}')

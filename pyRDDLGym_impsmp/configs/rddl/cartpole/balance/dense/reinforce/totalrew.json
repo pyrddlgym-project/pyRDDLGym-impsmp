@@ -5,7 +5,7 @@
   "seed": 3264,
   "state_dim": 5,
   "action_dim": 1,
-  "n_iters": 500,
+  "n_iters": 2500,
   "checkpoint_freq": 100,
   "models": {
     "type": "rddl_cartpole_balance",
@@ -48,7 +48,7 @@
   "algorithm": {
     "type": "reinforce",
     "params": {
-      "batch_size": 8192,
+      "batch_size": 4,
       "eval_batch_size": 32,
       "epsilon": 1e-12,
       "verbose": true

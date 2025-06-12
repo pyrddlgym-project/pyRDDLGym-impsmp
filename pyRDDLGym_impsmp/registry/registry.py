@@ -21,7 +21,7 @@ advantage_estimator_lookup_table = {
 }
 
 algorithm_lookup_table = {
-    'reinforce': pyRDDLGym_impsmp.algorithms.reinforce.reinforce,
+    'reinforce': pyRDDLGym_impsmp.algorithms.reinforce2.reinforce,
     'impsamp': pyRDDLGym_impsmp.algorithms.impsamp.impsamp,
     'impsamp_split_by_sign': pyRDDLGym_impsmp.algorithms.impsamp_split_by_sign.impsamp,
 }
@@ -70,8 +70,9 @@ policy_lookup_table = {
 }
 
 sampler_lookup_table = {
-    'hmc': pyRDDLGym_impsmp.samplers.hmc.HMCSampler,
-    'nuts': pyRDDLGym_impsmp.samplers.hmc.NoUTurnSampler,
+    'hmc': pyRDDLGym_impsmp.samplers.hmc.HMCSampler,       # tensorflow_probability
+    'nuts': pyRDDLGym_impsmp.samplers.hmc.NoUTurnSampler,  # tensorflow_probability
+    'hmc_blackjax': pyRDDLGym_impsmp.samplers.hmc_blackjax.HMCSampler,
     'fixed_num_proposed_rejection_sampler': pyRDDLGym_impsmp.samplers.rejection_sampler.FixedNumProposedRejectionSampler,
     'fixed_num_sampled_rejection_sampler': pyRDDLGym_impsmp.samplers.rejection_sampler.FixedNumSampledRejectionSampler,
 }

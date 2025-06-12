@@ -1,3 +1,4 @@
 import pyRDDLGym_impsmp.algorithms.reinforce
+import pyRDDLGym_impsmp.algorithms.reinforce2
 import pyRDDLGym_impsmp.algorithms.impsamp
 import pyRDDLGym_impsmp.algorithms.impsamp_split_by_sign

@@ -275,7 +275,7 @@ def impsamp(key, n_iters, checkpoint_freq,
     # initialize stats collection
     algo_stats = {
         'action_dim': A,
-        'state_dim': S,
+        'state_dim':  S,
         'batch_size': B,
         'subsample_size': subsample_size,
         'eval_batch_size': eval_batch_size,
@@ -330,7 +330,7 @@ def impsamp(key, n_iters, checkpoint_freq,
 
         key, dJ_hat, batch_stats = compute_impsamp_dJ_hat_estimate(
             key, epsilon, policy, sampling_model, train_model, subsample_size, Z_estimator_config['n_samples'],
-            policy.theta, init_model_states, actions, is_accepted_matrix)
+            policy.theta, init_model_states[0], actions[0], is_accepted_matrix)
 
         # update the policy
         updates, opt_state = optimizer.update(dJ_hat, opt_state)
