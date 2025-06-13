@@ -98,6 +98,7 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
                  key,
                  state_dim,
                  action_dim,
+                 horizon,
                  n_summands,
                  instance_idx,
                  is_relaxed,
@@ -106,7 +107,7 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
                  compiler_kwargs):
         # check that the requested directory and file exist
         domain_def_file_path = os.path.join(this_dir, 'domain.rddl')
-        instance_dir_path = os.path.join(this_dir, 'instances', f'dim{action_dim}_sum{n_summands}')
+        instance_dir_path = os.path.join(this_dir, 'instances', f'hor{horizon}', f'dim{action_dim}_sum{n_summands}')
         if not os.path.isdir(instance_dir_path):
             raise RuntimeError(
                 f'[SumOfHalfSpacesModel] Please check that the directory'
@@ -128,7 +129,7 @@ class RDDLSumOfHalfSpacesModel(BaseDeterministicModel):
         self.model = self.rddl_env.model
         self.state_dim = state_dim
         self.action_dim = action_dim
-        self.horizon = self.rddl_env.horizon
+        self.horizon = horizon
         self.n_summands = n_summands
         self.instance_idx = instance_idx
         assert self.action_dim == self.rddl_env.max_allowed_actions

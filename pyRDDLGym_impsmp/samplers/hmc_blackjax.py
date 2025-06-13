@@ -43,6 +43,16 @@ def sample_hmc(key,
                num_burnin_steps,
                num_adaptation_steps):
 
+    # B: batch size (number of parallel chains)
+    # P: number of policy parameters
+    # T: rollout horizon
+    # S: state space dim
+    # A: action space dim
+
+    B, P, T, A = sampler_init_state.shape
+    _, _, S    = init_model_states.shape
+
+
     def unnorm_log_density_vector(key, policy, model, theta, init_model_states, actions):
         """The signed, unnormalized instrumental density for parameter i is defined as
 
@@ -50,8 +60,8 @@ def sample_hmc(key,
 
         Where \tilde R denotes the cumulative reward over trajectory tau_i
         in the sampling model, and pi denotes the parametrized policy with
-        parameters theta. Please note that each parameter theta_i has its
-        own sample trajectory (denoted by tau_i).
+        parameters theta. Note that each parameter theta_i has its own sample
+        trajectory (denoted by tau_i).
 
         Args:
             key: jax.random.PRNGKey
@@ -94,7 +104,10 @@ def sample_hmc(key,
 
     target_log_prob = lambda x: target_log_prob_fn(**x)
 
-    inv_mass_matrix =  np.ones(264) * 0.1
+    # TODO: Get rid of hardcoded values
+    #inv_mass_matrix =  np.ones(264) * 0.1
+    inv_mass_matrix =  np.ones(96) * 0.1
+
     hmc = blackjax.hmc(target_log_prob, sampler_step_size, inv_mass_matrix, num_leapfrog_steps)
 
     def inference_loop(rng_key, kernel, initial_state, num_samples, num_chains):
@@ -116,12 +129,12 @@ def sample_hmc(key,
     hmc_kernel = jax.jit(hmc.step)
 
     key, subkey = jax.random.split(key)
-    states = inference_loop(subkey, hmc_kernel, initial_state, num_burnin_steps+1, 4096)
+    states = inference_loop(subkey, hmc_kernel, initial_state, num_burnin_steps+1, B)
 
-    sampled_init_model_states = states.position['init_model_states'][num_burnin_steps:]
-    sampled_actions           = states.position['actions'][num_burnin_steps:]
+    sampled_init_model_states = states.position['init_model_states'][-1]
+    sampled_actions           = states.position['actions'][-1]
 
-    accepted_matrix = jnp.ones((1, 4096, 12))
+    accepted_matrix = jnp.ones((1, B, P))
     return key, accepted_matrix, (sampled_init_model_states, sampled_actions)
 
 

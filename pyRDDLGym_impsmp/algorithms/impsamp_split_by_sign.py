@@ -120,8 +120,7 @@ def compute_impsamp_dJ_hat_estimate(
         batch_stats: Dict
             Collected statistics
     """
-    # Please see the "impsamp" function below for the meaning
-    # of the parameter shorthands
+    # See the "impsamp" function below for the meaning of the parameter shorthands
     B, P, T, A = actions.shape
 
     key, *subkeys = jax.random.split(key, num=B+1)
@@ -201,7 +200,7 @@ def compute_impsamp_dJ_hat_estimate(
         dpi = policy.diagonal_of_jacobian_traj(subkeys[1], policy.theta, states_PTS, actions_PTA)
         rho_vec = jnp.abs(adv_est * dpi)
 
-        Z_term = rho_vec / pi
+        Z_term = rho_vec / (pi + epsilon)
         return key, Z_term
 
     key, Z_terms = jax.lax.scan(_compute_Z_estimate_term, init=key, xs=Z_init_states)
@@ -330,7 +329,7 @@ def impsamp(key, n_iters, checkpoint_freq,
 
         key, dJ_hat, batch_stats = compute_impsamp_dJ_hat_estimate(
             key, epsilon, policy, sampling_model, train_model, subsample_size, Z_estimator_config['n_samples'],
-            policy.theta, init_model_states[0], actions[0], is_accepted_matrix)
+            policy.theta, init_model_states, actions, is_accepted_matrix)
 
         # update the policy
         updates, opt_state = optimizer.update(dJ_hat, opt_state)

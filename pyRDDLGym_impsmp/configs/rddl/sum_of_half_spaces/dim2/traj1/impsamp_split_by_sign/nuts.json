@@ -1,0 +1,110 @@
+{ "useGPU": true,
+  "use64bit": true,
+  "debug_nans": false,
+  "enable_jit": true,
+  "seed": 3264,
+  "state_dim": 2,
+  "action_dim": 2,
+  "n_iters": 50,
+  "checkpoint_freq": 10,
+  "models": {
+    "type": "rddl_sum_of_half_spaces",
+    "params": {
+      "horizon": 1,
+      "n_summands": 10,
+      "instance_idx": 0,
+      "reward_shift": 0.0,
+      "specs": {
+        "train_model": {
+          "is_relaxed": false,
+          "initial_state_config": {
+            "type": "normal",
+            "params": {
+              "mean": 0.0,
+              "scale": 2.0
+            }
+          },
+          "compiler_kwargs": {}
+        },
+        "sampling_model": {
+          "is_relaxed": true,
+          "initial_state_config": {
+            "type": "normal",
+            "params": {
+              "mean": 0.0,
+              "scale": 2.0
+            }
+          },
+          "compiler_kwargs": {
+            "use64bit": true,
+            "weight": 10.0
+          }
+        },
+        "eval_model": {
+          "is_relaxed": false,
+          "initial_state_config": {
+            "type": "normal",
+            "params": {
+              "mean": 0.0,
+              "scale": 2.0
+            }
+          },
+          "compiler_kwargs": {}
+        }
+      }
+    }
+  },
+  "bijector": {
+    "type": "identity",
+    "params": {}
+  },
+  "policy": {
+    "type": "multivar_normal_with_linear_parametrization",
+    "params": {
+        "compute_jacobians_analytically": true,
+        "cov_lower_cap": 0.05
+    }
+  },
+  "optimizer": {
+    "type": "adabelief",
+    "params": {
+      "learning_rate": 0.05
+    }
+  },
+  "algorithm": {
+    "type": "impsamp_split_by_sign",
+    "params": {
+      "batch_size": 1024,
+      "subsample_size": 1,
+      "eval_batch_size": 32,
+      "sampler": {
+        "type": "nuts",
+        "params": {
+          "step_size_distribution": {
+            "type": "constant",
+            "params": {
+              "value": 0.05
+            }
+          },
+          "init_strategy": {
+            "type": "rollout_cur_policy",
+            "params": {}
+          },
+          "reinit_strategy": {
+            "type": "rollout_cur_policy",
+            "params": {}
+          },
+          "max_tree_depth": 8,
+          "burnin_per_chain": 128,
+          "num_adaptation_steps": null
+        }
+      },
+      "Z_estimator_config": {
+        "n_samples": 4096
+      },
+      "epsilon": 1e-12,
+      "verbose": true
+    }
+  },
+  "save_to": "/tmp"
+}
