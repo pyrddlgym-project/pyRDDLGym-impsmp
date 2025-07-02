@@ -63,7 +63,7 @@ def r(a, env):
     x = jnp.sign(x)
     return jnp.sum(x)
 
-smoothing_weight = 1.0
+smoothing_weight = 0.1
 
 def r_smoothed(a, env):
     env_n, env_b = env
