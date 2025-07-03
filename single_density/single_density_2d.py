@@ -30,30 +30,39 @@ key_rng = jax.random.key(42)
 #
 # Definition of "Instance 0" of the Dim=2, Summands=10 RDDL
 # normal vectors
-env_n = jnp.array(
-    [[-0.6498891485751617,  0.2919621952260027],
-     [0.6786194558029103,  -0.6731776871798324],
-     [0.5186441418263966,   0.7688779421225117],
-     [0.9046459743664846,  -0.19908859352762293],
-     [1.3787654118345662,  -0.3343831688835496],
-     [0.15299290103060892, -0.4208794744431309],
-     [0.9567609279084787,   0.14615876772409975],
-     [0.7434759943923458,   1.5750369384499119],
-     [0.07260930861610973, -0.14729616541211463],
-     [0.36572742545177667, -0.6180098661319744]])
+env_dim = 2
+env_n_summands = 10
 
-# translation vectors
-env_b = jnp.array(
-    [[0.9221341845334698, -1.5875599610512214],
-     [-1.5407858463031727, -1.0830704454939821],
-     [-0.9714550617144435, -6.3226717384079],
-     [0.4627735557073612,  -0.9854401248393589],
-     [-1.5657090993934906,  2.054459931192971],
-     [-2.3975399618755096,  0.9660592961761412],
-     [-1.7790604424242211, -0.7348306237622735],
-     [0.5942818372802966,  -0.9727294659982499],
-     [2.9721688297435516,  -0.11274469824590543],
-     [-0.13144172918627878, 1.6276454625934715]])
+if env_dim == 2 and env_n_summands == 10:
+    env_n = jnp.array(
+        [[-0.6498891485751617,  0.2919621952260027],
+         [0.6786194558029103,  -0.6731776871798324],
+         [0.5186441418263966,   0.7688779421225117],
+         [0.9046459743664846,  -0.19908859352762293],
+         [1.3787654118345662,  -0.3343831688835496],
+         [0.15299290103060892, -0.4208794744431309],
+         [0.9567609279084787,   0.14615876772409975],
+         [0.7434759943923458,   1.5750369384499119],
+         [0.07260930861610973, -0.14729616541211463],
+         [0.36572742545177667, -0.6180098661319744]])
+
+    # translation vectors
+    env_b = jnp.array(
+        [[0.9221341845334698, -1.5875599610512214],
+         [-1.5407858463031727, -1.0830704454939821],
+         [-0.9714550617144435, -6.3226717384079],
+         [0.4627735557073612,  -0.9854401248393589],
+         [-1.5657090993934906,  2.054459931192971],
+         [-2.3975399618755096,  0.9660592961761412],
+         [-1.7790604424242211, -0.7348306237622735],
+         [0.5942818372802966,  -0.9727294659982499],
+         [2.9721688297435516,  -0.11274469824590543],
+         [-0.13144172918627878, 1.6276454625934715]])
+else:
+    key_rng, key_n, key_b = jax.random.split(key_rng, num=3)
+    shape = (env_n_summands, env_dim)
+    env_n = jax.random.normal(key_n, shape)
+    env_b = 2 * jax.random.normal(key_b, shape)
 
 env = (env_n, env_b)
 
@@ -63,7 +72,7 @@ def r(a, env):
     x = jnp.sign(x)
     return jnp.sum(x)
 
-smoothing_weight = 0.1
+smoothing_weight = 0.3
 
 def r_smoothed(a, env):
     env_n, env_b = env
@@ -73,37 +82,41 @@ def r_smoothed(a, env):
 
 
 # assume that the policy is distributed as a multivariate normal with parameters
-# mu = (mu_x, mu_y) and sigma = ((sigma_xx, 0), (0, sigma_yy))
+# mu = (mu_x1, mu_x2, ..., mu_xd) and sigma = ((sigma_x1x1, 0, ..., 0), ..., (0, 0, ..., sigma_xdxd))
 
 def initialize_theta_params(key_rng):
     key_rng, key_mu, key_sigma = jax.random.split(key_rng, num=3)
-    params_mu    = 5 *  jax.random.normal(key_mu, shape=(2,))
-    params_sigma = 10 * jax.random.normal(key_sigma, shape=(2,))
+    params_mu    = 5  * jax.random.normal(key_mu, shape=(env_dim,))
+    params_sigma = 10 * jax.random.normal(key_sigma, shape=(env_dim,))
     return key_rng, jnp.concatenate((params_mu, params_sigma))
 
 key_rng, pi_theta_P0 = initialize_theta_params(key_rng)
 
 
 def pi_sample(key, pi_theta_P, shape):
-    # shape should end in (..., 2)
+    # shape should end in (..., env_dim)
     x = jax.random.normal(key, shape)
-    return pi_theta_P[0:2] + pi_theta_P[2:] * x
+    # make sure the variance is positive
+    var = jax.nn.softplus(pi_theta_P[env_dim:])
+    return pi_theta_P[0:env_dim] + jnp.sqrt(var) * x
 
 def pi_pdf(x, pi_theta_P):
-    # shape of x should end in (..., 2)
-    return st.multivariate_normal.pdf(x, pi_theta_P[0:2], jnp.diag(pi_theta_P[2:]))
+    # shape of x should end in (..., env_dim)
+    var = jax.nn.softplus(pi_theta_P[env_dim:])
+    cov = jnp.diag(var)
+    return st.multivariate_normal.pdf(x, pi_theta_P[:env_dim], cov)
 
 grad_pi_pdf = jax.jit(jax.grad(pi_pdf, argnums=1))
 
 @partial(jax.jit, static_argnames=['batch_size', 'lr'])
 def reinforce_step(key, pi_theta_P, batch_size, lr):
     key, key_sample = jax.random.split(key, num=2)
-    a_batch_BA  = pi_sample(key_sample, pi_theta_P, shape=(batch_size, 2))
+    a_batch_BA  = pi_sample(key_sample, pi_theta_P, shape=(batch_size, env_dim))
     pdf_B       = pi_pdf(a_batch_BA, pi_theta_P)
     grad_pdf_BP = jnp.apply_along_axis(grad_pi_pdf, 1, a_batch_BA, pi_theta_P)
     rewards_B   = jnp.apply_along_axis(r_smoothed, 1, a_batch_BA, env)
 
-    reinforce_summands_BP = (grad_pdf_BP / (pdf_B[...,jnp.newaxis] + 1e-9)) * rewards_B[...,jnp.newaxis]
+    reinforce_summands_BP = (grad_pdf_BP / (pdf_B[...,jnp.newaxis] + 1e-8)) * rewards_B[...,jnp.newaxis]
     reinforce_update_P    = jnp.mean(reinforce_summands_BP, axis=0)
 
     pi_theta_P = pi_theta_P - lr * reinforce_update_P
@@ -127,12 +140,12 @@ def reinforce(key, pi_theta_P, n_iter, batch_size, lr):
     return key, pi_theta_P, stats_run
 
 
-M = 1
+M = 1e4
 def rho_pdf_unnorm(a_A, pi_theta_P):
     reward = r_smoothed(a_A, env)
     pdf = pi_pdf(a_A, pi_theta_P)
     grad_pdf_P = grad_pi_pdf(a_A, pi_theta_P)
-    norm_dlogpi = M * jnp.linalg.norm(grad_pdf_P / M, ord=2) / (pdf + 1e-6)
+    norm_dlogpi = M * jnp.linalg.norm(grad_pdf_P / M, ord=2) / (pdf + 1e-8)
     rho_val = jnp.abs(reward) * norm_dlogpi
     return rho_val
 
@@ -140,7 +153,7 @@ def log_rho_pdf_unnorm(a_A, pi_theta_P):
     reward = r_smoothed(a_A, env)
     pdf = pi_pdf(a_A, pi_theta_P)
     grad_pdf_P = grad_pi_pdf(a_A, pi_theta_P)
-    norm_dlogpi = M * jnp.linalg.norm(grad_pdf_P / M, ord=2) / (pdf + 1e-6)
+    norm_dlogpi = M * jnp.linalg.norm(grad_pdf_P / M, ord=2) / (pdf + 1e-8)
     log_rho_val = jnp.log(jnp.abs(reward)) + jnp.log(norm_dlogpi)
     return log_rho_val
 
@@ -149,8 +162,8 @@ def ISPG_step_hmc(key, pi_theta_P, batch_size, lr):
     key, key_sample, key_infer, key_r, key_Z = jax.random.split(key, num=5)
 
     hmc_target_log_prob = lambda a: log_rho_pdf_unnorm(a, pi_theta_P)
-    hmc_inv_mass_matrix = np.ones(2) * 0.1
-    hmc_step_size = 0.1
+    hmc_inv_mass_matrix = np.ones(env_dim) * 0.1
+    hmc_step_size = 3e-2
     hmc_num_leapfrog_steps = 32
     hmc_num_burnin_steps = 32
 
@@ -169,6 +182,7 @@ def ISPG_step_hmc(key, pi_theta_P, batch_size, lr):
         return states
 
     initial_pos = pi_sample(key_sample, pi_theta_P, (batch_size, 2))
+    #initial_pos =  10 * jax.random.normal(key_sample, (batch_size, env_dim))
     initial_state = jax.vmap(hmc.init, in_axes=(0))(initial_pos)
 
     hmc_kernel = jax.jit(hmc.step)
@@ -181,21 +195,21 @@ def ISPG_step_hmc(key, pi_theta_P, batch_size, lr):
     grad_pdf_norm_B = jnp.linalg.norm(grad_pdf_BP, ord=2, axis=1)
     rewards_B       = jnp.apply_along_axis(r_smoothed, 1, a_batch_BA, env)
 
-    scalars_B = rewards_B / (jnp.abs(rewards_B) * grad_pdf_norm_B + 1e-9)
+    scalars_B = rewards_B / (jnp.abs(rewards_B) * grad_pdf_norm_B + 1e-8)
     ISPG_summands_unnorm_BP = scalars_B[:, jnp.newaxis] * grad_pdf_BP
 
-    Z_est_a_BA = pi_sample(key_Z, pi_theta_P, shape=(4096, 2))
+    Z_est_a_BA = pi_sample(key_Z, pi_theta_P, shape=(4096, env_dim))
     Z_est_pi_pdf_B = pi_pdf(Z_est_a_BA, pi_theta_P)
     Z_est_rho_pdf_unnorm_B = jnp.apply_along_axis(rho_pdf_unnorm, 1, Z_est_a_BA, pi_theta_P)
 
-    Z_est_B = Z_est_pi_pdf_B / (Z_est_rho_pdf_unnorm_B + 1e-6)
+    Z_est_B = Z_est_pi_pdf_B / (Z_est_rho_pdf_unnorm_B + 1e-8)
     Z_est = jnp.mean(Z_est_B)
 
     ISPG_update_P = Z_est * jnp.mean(ISPG_summands_unnorm_BP, axis=0)
 
     pi_theta_P = pi_theta_P - lr * ISPG_update_P
 
-    stats_rewards_est_a_BA = pi_sample(key_r, pi_theta_P, shape=(32, 2))
+    stats_rewards_est_a_BA = pi_sample(key_r, pi_theta_P, shape=(32, env_dim))
     stats_rewards_est_B = jnp.apply_along_axis(r_smoothed, 1, stats_rewards_est_a_BA, env)
     stats_rewards_est = jnp.mean(stats_rewards_est_B)
     stats_step = [stats_rewards_est, Z_est]
@@ -212,8 +226,11 @@ def ISPG(key, pi_theta_P, n_iter, batch_size, lr):
     for it in range(n_iter):
         print(it)
         key, pi_theta_P, stats_step = ISPG_step_hmc(key, pi_theta_P, batch_size, lr)
+
         stats_run[0].append(stats_step[0])
-        stats_run[1].append(pi_theta_P)
+        stats_pi_theta = pi_theta_P
+        stats_pi_theta = stats_pi_theta.at[env_dim:].set(jax.nn.softplus(stats_pi_theta[env_dim:]))
+        stats_run[1].append(stats_pi_theta)
         stats_run[2].append(stats_step[1])
         if jnp.isnan(stats_step[1]):
             print(f'NaN on iteration {it} --- early exit')
@@ -221,7 +238,14 @@ def ISPG(key, pi_theta_P, n_iter, batch_size, lr):
 
     return key, pi_theta_P, stats_run
 
-n_iter = 200
+n_iter = 50
+
+# Compare r vs r_smoothed at a point
+key_rng, key_a = jax.random.split(key_rng)
+a = 5 * jax.random.normal(key_rng, shape=(1, env_dim))
+print('r=',          r(a, env))
+print('r_smoothed=', r_smoothed(a, env))
+
 
 pi_theta_P = pi_theta_P0
 key_rng, pi_theta_P, stats_run_PG32 = reinforce(key_rng, pi_theta_P, n_iter, 32, 1e-2)
