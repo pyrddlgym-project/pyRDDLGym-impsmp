@@ -26,14 +26,18 @@ key_rng = jax.random.key(42)
 # is sum_i R_i.
 #
 # Smoothed reward:           r_sm(x) = sum_i tanh((n_i . (x - b_i)) / smoothing_weight)
-#
-#
-# Definition of "Instance 0" of the Dim=2, Summands=10 RDDL
-# normal vectors
+
 env_dim = 2
 env_n_summands = 10
 
 if env_dim == 2 and env_n_summands == 10:
+    # This special case is hard-coded because there is a reference
+    # visualization of the reward function at
+    #
+    #     http://iliasmirnov.com/ISPG/2023_11_14_sum_of_half_spaces/dim2_sum10/img0.png
+    #
+    # Definition of "Instance 0" of the Dim=2, Summands=10 RDDL
+    # normal vectors
     env_n = jnp.array(
         [[-0.6498891485751617,  0.2919621952260027],
          [0.6786194558029103,  -0.6731776871798324],
@@ -140,7 +144,7 @@ def reinforce(key, pi_theta_P, n_iter, batch_size, lr):
     return key, pi_theta_P, stats_run
 
 
-M = 1e4
+M = 1
 def rho_pdf_unnorm(a_A, pi_theta_P):
     reward = r_smoothed(a_A, env)
     pdf = pi_pdf(a_A, pi_theta_P)
@@ -163,7 +167,7 @@ def ISPG_step_hmc(key, pi_theta_P, batch_size, lr):
 
     hmc_target_log_prob = lambda a: log_rho_pdf_unnorm(a, pi_theta_P)
     hmc_inv_mass_matrix = np.ones(env_dim) * 0.1
-    hmc_step_size = 3e-2
+    hmc_step_size = 0.1
     hmc_num_leapfrog_steps = 32
     hmc_num_burnin_steps = 32
 
@@ -238,7 +242,13 @@ def ISPG(key, pi_theta_P, n_iter, batch_size, lr):
 
     return key, pi_theta_P, stats_run
 
-n_iter = 50
+
+
+
+
+
+
+n_iter = 350
 
 # Compare r vs r_smoothed at a point
 key_rng, key_a = jax.random.split(key_rng)
@@ -257,7 +267,7 @@ pi_theta_P = pi_theta_P0
 key_rng, pi_theta_P, stats_run_PG4k_2 = reinforce(key_rng, pi_theta_P, n_iter, 4096, 1.0)
 
 pi_theta_P = pi_theta_P0
-key_rng, pi_theta_P, stats_run_ISPG = ISPG(key_rng, pi_theta_P, n_iter, 32, 1e-2)
+key_rng, pi_theta_P, stats_run_ISPG = ISPG(key_rng, pi_theta_P, n_iter, 32, 1e-1)
 
 ISPG_rew, ISPG_pi_theta, ISPG_Z_est = stats_run_ISPG
 
