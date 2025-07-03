@@ -3,6 +3,7 @@ import numpy as np
 import jax.numpy as jnp
 import jax.scipy.stats as st
 
+import optax
 import blackjax
 
 from functools import partial
@@ -25,18 +26,20 @@ key_rng = jax.random.key(42)
 # Denote the reward of a point x with respect to hyperplane Hi b Ri. Then the reward of the point x
 # is sum_i R_i.
 #
-# Smoothed reward:           r_sm(x) = sum_i tanh((n_i . (x - b_i)) / smoothing_weight)
+# Smoothed reward:           r_sm(x) = sum_i tanh((n_i . (x - b_i)) / env_smoothing_weight)
 
-env_dim = 2
+env_dim = 10
 env_n_summands = 10
+env_smoothing_weight = 10.0
 
 if env_dim == 2 and env_n_summands == 10:
+    # Definition of "Instance 0" of the Dim=2, Summands=10 RDDL
+    #
     # This special case is hard-coded because there is a reference
     # visualization of the reward function at
     #
     #     http://iliasmirnov.com/ISPG/2023_11_14_sum_of_half_spaces/dim2_sum10/img0.png
     #
-    # Definition of "Instance 0" of the Dim=2, Summands=10 RDDL
     # normal vectors
     env_n = jnp.array(
         [[-0.6498891485751617,  0.2919621952260027],
@@ -76,12 +79,10 @@ def r(a, env):
     x = jnp.sign(x)
     return jnp.sum(x)
 
-smoothing_weight = 0.3
-
 def r_smoothed(a, env):
     env_n, env_b = env
     x = jnp.einsum('ij,ij->i', env_n, (a - env_b))
-    x = jnp.tanh(x / smoothing_weight)
+    x = jnp.tanh(x / env_smoothing_weight)
     return jnp.sum(x)
 
 
@@ -112,8 +113,9 @@ def pi_pdf(x, pi_theta_P):
 
 grad_pi_pdf = jax.jit(jax.grad(pi_pdf, argnums=1))
 
-@partial(jax.jit, static_argnames=['batch_size', 'lr'])
-def reinforce_step(key, pi_theta_P, batch_size, lr):
+
+@partial(jax.jit, static_argnames=['optimizer', 'batch_size'])
+def reinforce_step(key, pi_theta_P, optimizer, opt_state, batch_size, lr):
     key, key_sample = jax.random.split(key, num=2)
     a_batch_BA  = pi_sample(key_sample, pi_theta_P, shape=(batch_size, env_dim))
     pdf_B       = pi_pdf(a_batch_BA, pi_theta_P)
@@ -123,25 +125,30 @@ def reinforce_step(key, pi_theta_P, batch_size, lr):
     reinforce_summands_BP = (grad_pdf_BP / (pdf_B[...,jnp.newaxis] + 1e-8)) * rewards_B[...,jnp.newaxis]
     reinforce_update_P    = jnp.mean(reinforce_summands_BP, axis=0)
 
-    pi_theta_P = pi_theta_P - lr * reinforce_update_P
+    updates_P, opt_state = optimizer.update(reinforce_update_P, opt_state)
+    pi_theta_P = optax.apply_updates(pi_theta_P, updates_P)
+    #pi_theta_P = pi_theta_P - lr * reinforce_update_P
 
     reward     = jnp.mean(rewards_B)
     stats_step = [reward]
 
-    return key, pi_theta_P, stats_step
+    return key, pi_theta_P, opt_state, stats_step
 
 
-def reinforce(key, pi_theta_P, n_iter, batch_size, lr):
+def reinforce(key, pi_theta_P, optimizer, opt_state, n_iter, batch_size, lr):
     stats_reward   = []
     stats_pi_theta_P = []
     stats_run = (stats_reward, stats_pi_theta_P)
 
     for _ in range(n_iter):
-        key, pi_theta_P, stats_step = reinforce_step(key, pi_theta_P, batch_size, lr)
+        key, pi_theta_P, opt_state, stats_step = reinforce_step(key, pi_theta_P, optimizer, opt_state, batch_size, lr)
         stats_run[0].append(stats_step[0])
-        stats_run[1].append(pi_theta_P)
+        stats_pi_theta = pi_theta_P
+        # record the interpretable variance, not the parameters
+        stats_pi_theta = stats_pi_theta.at[env_dim:].set(jax.nn.softplus(stats_pi_theta[env_dim:]))
+        stats_run[1].append(stats_pi_theta)
 
-    return key, pi_theta_P, stats_run
+    return key, pi_theta_P, opt_state, stats_run
 
 
 M = 1
@@ -161,9 +168,9 @@ def log_rho_pdf_unnorm(a_A, pi_theta_P):
     log_rho_val = jnp.log(jnp.abs(reward)) + jnp.log(norm_dlogpi)
     return log_rho_val
 
-@partial(jax.jit, static_argnames=('batch_size', 'lr'))
-def ISPG_step_hmc(key, pi_theta_P, batch_size, lr):
-    key, key_sample, key_infer, key_r, key_Z = jax.random.split(key, num=5)
+@partial(jax.jit, static_argnames=('optimizer', 'batch_size',))
+def ISPG_step_hmc(it, key, pi_theta_P, optimizer, opt_state, batch_size):
+    key, key_sample, key_infer, key_r, key_Z, key_vre = jax.random.split(key, num=6)
 
     hmc_target_log_prob = lambda a: log_rho_pdf_unnorm(a, pi_theta_P)
     hmc_inv_mass_matrix = np.ones(env_dim) * 0.1
@@ -185,15 +192,17 @@ def ISPG_step_hmc(key, pi_theta_P, batch_size, lr):
 
         return states
 
-    initial_pos = pi_sample(key_sample, pi_theta_P, (batch_size, 2))
+    initial_pos = pi_sample(key_sample, pi_theta_P, (batch_size, env_dim))
     #initial_pos =  10 * jax.random.normal(key_sample, (batch_size, env_dim))
     initial_state = jax.vmap(hmc.init, in_axes=(0))(initial_pos)
 
     hmc_kernel = jax.jit(hmc.step)
 
-    states = inference_loop(key_infer, hmc_kernel, initial_state, hmc_num_burnin_steps+1, batch_size)
+    n_kept_after_burnin = 1
+    states = inference_loop(key_infer, hmc_kernel, initial_state, hmc_num_burnin_steps+n_kept_after_burnin, batch_size)
 
-    a_batch_BA = states.position[-1, :]
+    a_batch_BA = states.position[-n_kept_after_burnin:, :]
+    a_batch_BA = a_batch_BA.reshape(-1, env_dim)
 
     grad_pdf_BP     = jnp.apply_along_axis(grad_pi_pdf, 1, a_batch_BA, pi_theta_P)
     grad_pdf_norm_B = jnp.linalg.norm(grad_pdf_BP, ord=2, axis=1)
@@ -202,6 +211,8 @@ def ISPG_step_hmc(key, pi_theta_P, batch_size, lr):
     scalars_B = rewards_B / (jnp.abs(rewards_B) * grad_pdf_norm_B + 1e-8)
     ISPG_summands_unnorm_BP = scalars_B[:, jnp.newaxis] * grad_pdf_BP
 
+    # compute estimate of the partition function Z_rho
+    # by sampling from pi and using importance sampling again
     Z_est_a_BA = pi_sample(key_Z, pi_theta_P, shape=(4096, env_dim))
     Z_est_pi_pdf_B = pi_pdf(Z_est_a_BA, pi_theta_P)
     Z_est_rho_pdf_unnorm_B = jnp.apply_along_axis(rho_pdf_unnorm, 1, Z_est_a_BA, pi_theta_P)
@@ -211,44 +222,68 @@ def ISPG_step_hmc(key, pi_theta_P, batch_size, lr):
 
     ISPG_update_P = Z_est * jnp.mean(ISPG_summands_unnorm_BP, axis=0)
 
-    pi_theta_P = pi_theta_P - lr * ISPG_update_P
+
+    # estimate the variance reduction
+    ISPG_var = Z_est * Z_est * jnp.trace(jnp.cov(ISPG_summands_unnorm_BP, rowvar=False))
+
+    a_batch_vre_BA = pi_sample(key_vre, pi_theta_P, shape=a_batch_BA.shape)
+    pdf_B          = pi_pdf(a_batch_vre_BA, pi_theta_P)
+    grad_pdf_BP    = jnp.apply_along_axis(grad_pi_pdf, 1, a_batch_vre_BA, pi_theta_P)
+    rewards_B      = jnp.apply_along_axis(r_smoothed, 1, a_batch_vre_BA, env)
+
+    reinforce_summands_BP = (grad_pdf_BP / (pdf_B[...,jnp.newaxis] + 1e-8)) * rewards_B[...,jnp.newaxis]
+    REINFORCE_var = jnp.trace(jnp.cov(reinforce_summands_BP, rowvar=False))
+
+    mag = jnp.linalg.norm(ISPG_update_P, ord=2)
+    vre = REINFORCE_var / ISPG_var
+
+    updates_P, opt_state = optimizer.update(ISPG_update_P, opt_state)
+    pi_theta_P = optax.apply_updates(pi_theta_P, updates_P)
+    #    pi_theta_P = pi_theta_P - lr * ISPG_update_P
+
 
     stats_rewards_est_a_BA = pi_sample(key_r, pi_theta_P, shape=(32, env_dim))
     stats_rewards_est_B = jnp.apply_along_axis(r_smoothed, 1, stats_rewards_est_a_BA, env)
     stats_rewards_est = jnp.mean(stats_rewards_est_B)
-    stats_step = [stats_rewards_est, Z_est]
+    stats_step = [stats_rewards_est, Z_est, vre, mag]
 
-    return key, pi_theta_P, stats_step
+    return key, pi_theta_P, opt_state, stats_step
 
 
-def ISPG(key, pi_theta_P, n_iter, batch_size, lr):
+def ISPG(key, pi_theta_P, optimizer, opt_state, n_iter, batch_size, lr):
     stats_reward     = []
     stats_pi_theta_P = []
     stats_Z_est      = []
-    stats_run = (stats_reward, stats_pi_theta_P, stats_Z_est)
+    stats_vre        = []
+    stats_mag        = []
 
     for it in range(n_iter):
-        print(it)
-        key, pi_theta_P, stats_step = ISPG_step_hmc(key, pi_theta_P, batch_size, lr)
+        print('it={},  variance reduction ~ {},   lr*mag={}'.format(it,
+            stats_vre[-1] if stats_vre else 'None',
+            lr*stats_mag[-1] if stats_mag else 'None'))
 
-        stats_run[0].append(stats_step[0])
+
+        key, pi_theta_P, opt_state, stats_step = ISPG_step_hmc(it, key, pi_theta_P, optimizer, opt_state, batch_size)
+
+        stats_reward.append(stats_step[0])
         stats_pi_theta = pi_theta_P
+        # record the interpretable variance, not the parameters
         stats_pi_theta = stats_pi_theta.at[env_dim:].set(jax.nn.softplus(stats_pi_theta[env_dim:]))
-        stats_run[1].append(stats_pi_theta)
-        stats_run[2].append(stats_step[1])
+        stats_pi_theta_P.append(stats_pi_theta)
+        stats_Z_est.append(stats_step[1])
+        stats_vre.append(stats_step[2])
+        stats_mag.append(stats_step[3])
         if jnp.isnan(stats_step[1]):
             print(f'NaN on iteration {it} --- early exit')
             break
 
-    return key, pi_theta_P, stats_run
+
+    stats_run = (stats_reward, stats_pi_theta_P, stats_Z_est, stats_vre, stats_mag)
+    return key, pi_theta_P, opt_state, stats_run
 
 
-
-
-
-
-
-n_iter = 350
+# ==== Experiment config =====
+n_iter = 1000
 
 # Compare r vs r_smoothed at a point
 key_rng, key_a = jax.random.split(key_rng)
@@ -256,40 +291,49 @@ a = 5 * jax.random.normal(key_rng, shape=(1, env_dim))
 print('r=',          r(a, env))
 print('r_smoothed=', r_smoothed(a, env))
 
+key_rng, key_ISPG, *keys_PG = jax.random.split(key_rng, num=5)
 
-pi_theta_P = pi_theta_P0
-key_rng, pi_theta_P, stats_run_PG32 = reinforce(key_rng, pi_theta_P, n_iter, 32, 1e-2)
+# benchmark PG (REINFORCE)
+b_small  = 128
+PG_lr    = [1.0, 1e-2,  1.0]
+PG_b     = [b_small,  4096, 4096]
+PG_stats = []
 
-pi_theta_P = pi_theta_P0
-key_rng, pi_theta_P, stats_run_PG4k = reinforce(key_rng, pi_theta_P, n_iter, 4096, 1e-2)
+for key, b, lr in zip(keys_PG, PG_b, PG_lr):
+    pi_theta_P = jnp.copy(pi_theta_P0)
+    optimizer = optax.sgd(lr)
+    opt_state = optimizer.init(pi_theta_P)
+    _, pi_theta_P, _, stats_run = reinforce(key, pi_theta_P, optimizer, opt_state, n_iter, b, lr)
+    PG_stats.append(stats_run)
 
-pi_theta_P = pi_theta_P0
-key_rng, pi_theta_P, stats_run_PG4k_2 = reinforce(key_rng, pi_theta_P, n_iter, 4096, 1.0)
 
-pi_theta_P = pi_theta_P0
-key_rng, pi_theta_P, stats_run_ISPG = ISPG(key_rng, pi_theta_P, n_iter, 32, 1e-1)
+# benchmark ISPG
+pi_theta_P = jnp.copy(pi_theta_P0)
+ISPG_num_chains = b_small
+ISPG_lr = 3e4
+optimizer = optax.sgd(ISPG_lr)
+opt_state = optimizer.init(pi_theta_P)
+key_ISPG, pi_theta_P, _, stats_run_ISPG = ISPG(
+    key_ISPG, pi_theta_P, optimizer, opt_state, n_iter, ISPG_num_chains, ISPG_lr)
 
-ISPG_rew, ISPG_pi_theta, ISPG_Z_est = stats_run_ISPG
+ISPG_rew, ISPG_pi_theta, ISPG_Z_est, ISPG_vre, ISPG_mag = stats_run_ISPG
 
-print(ISPG_rew[:20])
-print(ISPG_pi_theta[:20])
-print(ISPG_Z_est[:20])
-
-print('Final policy params:')
-print('PG:')
-print(stats_run_PG4k[1][-5:])
-print('ISPG:')
-print(ISPG_pi_theta[-5:])
+print(ISPG_rew[:10])
+print(ISPG_pi_theta[:10])
+print(ISPG_Z_est[:10])
 
 
 fig, ax = plt.subplots()
 
-ax.plot(range(n_iter), stats_run_PG32[0], label='PG b=32 lr=1e-2')
-ax.plot(range(n_iter), stats_run_PG4k[0], label='PG b=4096 lr=1e-2')
-ax.plot(range(n_iter), stats_run_PG4k_2[0], label='PG b=4096 lr=1.0')
-ax.plot(range(n_iter), stats_run_ISPG[0], label='ISPG b=32 lr=1e-2')
+PG_labels = [f'PG b={b} lr={lr}' for b, lr in zip(PG_b, PG_lr)]
+ISPG_label = f'ISPG b={ISPG_num_chains} lr={ISPG_lr}'
 
-ax.set_title(f'Smoothed sum-of-half-spaces env.  smoothing_weight={smoothing_weight}')
+for stats, label in zip(PG_stats, PG_labels):
+    ax.plot(range(n_iter), stats[0], label=label)
+
+ax.plot(range(n_iter), stats_run_ISPG[0], label=ISPG_label)
+
+ax.set_title(f'Smoothed sum-of-half-spaces env. dim={env_dim}  smoothing_weight={env_smoothing_weight}')
 
 ax.legend()
 plt.show()
