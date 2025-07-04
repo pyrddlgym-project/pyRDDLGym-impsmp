@@ -174,18 +174,18 @@ def log_rho_pdf_unnorm(a_A, pi_theta_P):
     return log_rho_val
 
 
-rej_sampling_M = 1e10
+rej_sampling_M = 1e3
 
-@partial(jax.jit, static_argnames=('optimizer', 'proposal_size', 'batch_size'))
+#@partial(jax.jit, static_argnames=('optimizer', 'proposal_size', 'batch_size'))
 def ISPG_step_rej(it, key, pi_theta_P, optimizer, opt_state, last_sample, proposal_size, batch_size):
-    key, key_u, key_sample, key_infer, key_r, key_Z, key_vre = jax.random.split(key, num=7)
+    key, key_u, key_sample, key_infer, key_r, key_Z, key_vre, key_bias = jax.random.split(key, num=8)
 
     u_S = jax.random.uniform(key_u, shape=(proposal_size,))
     proposed_SA = pi_sample(key_sample, pi_theta_P, (proposal_size, env_dim))
     pi_S  = pi_pdf(proposed_SA, pi_theta_P)
     rho_S = jnp.apply_along_axis(rho_pdf_unnorm, 1, proposed_SA, pi_theta_P)
 
-    accepted_S = u_S < rho_S / (M * pi_S)
+    accepted_S = u_S < (rho_S / (rej_sampling_M * pi_S))
 
     accepted_ind_S = jnp.argwhere(accepted_S, size=proposal_size, fill_value=-1)[..., 0]
     accepted_ind_B = accepted_ind_S[:batch_size]
@@ -201,7 +201,7 @@ def ISPG_step_rej(it, key, pi_theta_P, optimizer, opt_state, last_sample, propos
 
     # compute estimate of the partition function Z_rho
     # by sampling from pi and using importance sampling again
-    Z_est_a_BA = pi_sample(key_Z, pi_theta_P, shape=(4096*4, env_dim))
+    Z_est_a_BA = pi_sample(key_Z, pi_theta_P, shape=(4096, env_dim))
     Z_est_pi_pdf_B = pi_pdf(Z_est_a_BA, pi_theta_P)
     Z_est_rho_pdf_unnorm_B = jnp.apply_along_axis(rho_pdf_unnorm, 1, Z_est_a_BA, pi_theta_P)
 
@@ -210,7 +210,6 @@ def ISPG_step_rej(it, key, pi_theta_P, optimizer, opt_state, last_sample, propos
 
     ISPG_update_P = Z_est * jnp.mean(ISPG_summands_unnorm_BP, axis=0)
 
-
     # estimate the variance reduction
     ISPG_var = Z_est * Z_est * jnp.trace(jnp.cov(ISPG_summands_unnorm_BP, rowvar=False))
 
@@ -218,13 +217,24 @@ def ISPG_step_rej(it, key, pi_theta_P, optimizer, opt_state, last_sample, propos
     pdf_B          = pi_pdf(a_batch_vre_BA, pi_theta_P)
     grad_pdf_BP    = jnp.apply_along_axis(grad_pi_pdf, 1, a_batch_vre_BA, pi_theta_P)
     rewards_B      = jnp.apply_along_axis(r_smoothed, 1, a_batch_vre_BA, env)
-
     reinforce_summands_BP = (grad_pdf_BP / (pdf_B[...,jnp.newaxis] + 1e-8)) * rewards_B[...,jnp.newaxis]
     REINFORCE_var = jnp.trace(jnp.cov(reinforce_summands_BP, rowvar=False))
 
     mag = jnp.linalg.norm(ISPG_update_P, ord=2)
     vre = REINFORCE_var / ISPG_var
 
+    # estimate the bias
+    a_batch_bias_BA = pi_sample(key_bias, pi_theta_P, shape=(16384, env_dim))
+    pdf_B           = pi_pdf(a_batch_bias_BA, pi_theta_P)
+    grad_pdf_BP     = jnp.apply_along_axis(grad_pi_pdf, 1, a_batch_bias_BA, pi_theta_P)
+    rewards_B       = jnp.apply_along_axis(r_smoothed, 1, a_batch_bias_BA, env)
+    reinforce_summands_BP = (grad_pdf_BP / (pdf_B[...,jnp.newaxis] + 1e-8)) * rewards_B[...,jnp.newaxis]
+    REINFORCE_bias_est_P = jnp.mean(reinforce_summands_BP, axis=0)
+
+    bias_est_P = ISPG_update_P - REINFORCE_bias_est_P
+    bias_est   = jnp.max(jnp.abs(bias_est_P))
+
+    # update the policy pi parameters
     updates_P, opt_state = optimizer.update(ISPG_update_P, opt_state)
     pi_theta_P = optax.apply_updates(pi_theta_P, updates_P)
     #    pi_theta_P = pi_theta_P - lr * ISPG_update_P
@@ -233,7 +243,7 @@ def ISPG_step_rej(it, key, pi_theta_P, optimizer, opt_state, last_sample, propos
     stats_rewards_est_B = jnp.apply_along_axis(r_smoothed, 1, stats_rewards_est_a_BA, env)
     stats_rewards_est = jnp.mean(stats_rewards_est_B)
     acc_rate = jnp.sum(accepted_S) / batch_size
-    stats_step = [stats_rewards_est, Z_est, vre, mag, acc_rate]
+    stats_step = [stats_rewards_est, Z_est, vre, mag, acc_rate, bias_est]
 
     return key, pi_theta_P, opt_state, a_batch_BA, stats_step
 
@@ -244,15 +254,19 @@ def ISPG_rej(key, pi_theta_P, optimizer, opt_state, n_iter, proposal_size, batch
     stats_vre    = []
     stats_mag    = []
     stats_acc    = []
+    stats_bias   = []
 
     key, key_sample = jax.random.split(key)
     sample = pi_sample(key_sample, pi_theta_P, (batch_size, env_dim))
 
     for it in range(n_iter):
-        print('it={},  variance reduction ~ {},   lr*mag={},    acc={}'.format(it,
-            stats_vre[-1] if stats_vre else 'None',
-            lr*stats_mag[-1] if stats_mag else 'None',
-            stats_acc[-1] if stats_acc else 'None'))
+        if it > 0:
+            print('it={},  rew={:>2.3f},    variance reduction ~ {:>6.0f},      bias ~ {:>6.4f},    lr*mag={:>6.4f},    acc={:>3.2f}'.format(it,
+                stats_reward[-1],
+                stats_vre[-1],
+                stats_bias[-1],
+                lr*stats_mag[-1],
+                stats_acc[-1]))
 
 
         key, pi_theta_P, opt_state, sample, stats_step = ISPG_step_rej(it, key, pi_theta_P, optimizer, opt_state, sample, proposal_size, batch_size)
@@ -266,6 +280,7 @@ def ISPG_rej(key, pi_theta_P, optimizer, opt_state, n_iter, proposal_size, batch
         stats_vre.append(stats_step[2])
         stats_mag.append(stats_step[3])
         stats_acc.append(stats_step[4])
+        stats_bias.append(stats_step[5])
         if stats_acc[-1] < 1.0:
             print('[ISPG_rej] Insufficiently many accepted samples -- early exit')
             break
@@ -396,7 +411,7 @@ def ISPG_hmc(key, pi_theta_P, optimizer, opt_state, n_iter, batch_size, lr):
 
 
 # ==== Experiment config =====
-n_iter = 1000
+n_iter = 10
 
 # Compare r vs r_smoothed at a point
 key_rng, key_a = jax.random.split(key_rng)
@@ -423,9 +438,9 @@ for key, b, lr in zip(keys_PG, PG_b, PG_lr):
 
 # benchmark ISPG
 pi_theta_P = jnp.copy(pi_theta_P0)
-ISPG_proposal_size = 1024
 ISPG_num_chains = b_small
-ISPG_lr = 1e-1
+ISPG_proposal_size = ISPG_num_chains * 128
+ISPG_lr = 1e0
 #optimizer = optax.adam(ISPG_lr)
 optimizer = optax.sgd(ISPG_lr)
 opt_state = optimizer.init(pi_theta_P)
