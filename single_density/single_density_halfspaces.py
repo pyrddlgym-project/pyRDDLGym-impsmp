@@ -9,6 +9,9 @@ import blackjax
 from functools import partial
 import matplotlib.pyplot as plt
 
+# use 64-bit floating point?
+jax.config.update('jax_enable_x64', True)
+
 key_rng = jax.random.key(42)
 
 
@@ -30,7 +33,7 @@ key_rng = jax.random.key(42)
 
 env_dim = 2
 env_n_summands = 10
-env_smoothing_weight = 1.0
+env_smoothing_weight = 0.3
 
 if env_dim == 2 and env_n_summands == 10:
     # Definition of "Instance 0" of the Dim=2, Summands=10 RDDL
@@ -224,10 +227,10 @@ def ISPG_step_rej(it, key, pi_theta_P, optimizer, opt_state, last_sample, propos
     vre = REINFORCE_var / ISPG_var
 
     # estimate the bias
-    a_batch_bias_BA = pi_sample(key_bias, pi_theta_P, shape=(16384, env_dim))
-    pdf_B           = pi_pdf(a_batch_bias_BA, pi_theta_P)
-    grad_pdf_BP     = jnp.apply_along_axis(grad_pi_pdf, 1, a_batch_bias_BA, pi_theta_P)
-    rewards_B       = jnp.apply_along_axis(r_smoothed, 1, a_batch_bias_BA, env)
+    a_batch_bias_est_BA = pi_sample(key_bias, pi_theta_P, shape=(16384*8, env_dim))
+    pdf_B               = pi_pdf(a_batch_bias_est_BA, pi_theta_P)
+    grad_pdf_BP         = jnp.apply_along_axis(grad_pi_pdf, 1, a_batch_bias_est_BA, pi_theta_P)
+    rewards_B           = jnp.apply_along_axis(r_smoothed, 1, a_batch_bias_est_BA, env)
     reinforce_summands_BP = (grad_pdf_BP / (pdf_B[...,jnp.newaxis] + 1e-8)) * rewards_B[...,jnp.newaxis]
     REINFORCE_bias_est_P = jnp.mean(reinforce_summands_BP, axis=0)
 
@@ -236,7 +239,7 @@ def ISPG_step_rej(it, key, pi_theta_P, optimizer, opt_state, last_sample, propos
 
     # update the policy pi parameters
     updates_P, opt_state = optimizer.update(ISPG_update_P, opt_state)
-    pi_theta_P = optax.apply_updates(pi_theta_P, updates_P)
+    pi_theta_P = optax.apply_updates(pi_theta_P, -updates_P)
     #    pi_theta_P = pi_theta_P - lr * ISPG_update_P
 
     stats_rewards_est_a_BA = pi_sample(key_r, pi_theta_P, shape=(1024, env_dim))
@@ -261,7 +264,7 @@ def ISPG_rej(key, pi_theta_P, optimizer, opt_state, n_iter, proposal_size, batch
 
     for it in range(n_iter):
         if it > 0:
-            print('it={},  rew={:>2.3f},    variance reduction ~ {:>6.0f},      bias ~ {:>6.4f},    lr*mag={:>6.4f},    acc={:>3.2f}'.format(it,
+            print('it={},  rew={:>2.3f},    variance reduction ~ {:>14.0f},      bias ~ {:>6.4f},    lr*mag={:>6.4f},    acc={:>3.2f}'.format(it,
                 stats_reward[-1],
                 stats_vre[-1],
                 stats_bias[-1],
@@ -411,7 +414,7 @@ def ISPG_hmc(key, pi_theta_P, optimizer, opt_state, n_iter, batch_size, lr):
 
 
 # ==== Experiment config =====
-n_iter = 10
+n_iter = 100
 
 # Compare r vs r_smoothed at a point
 key_rng, key_a = jax.random.split(key_rng)
@@ -440,7 +443,7 @@ for key, b, lr in zip(keys_PG, PG_b, PG_lr):
 pi_theta_P = jnp.copy(pi_theta_P0)
 ISPG_num_chains = b_small
 ISPG_proposal_size = ISPG_num_chains * 128
-ISPG_lr = 1e0
+ISPG_lr = 1e2
 #optimizer = optax.adam(ISPG_lr)
 optimizer = optax.sgd(ISPG_lr)
 opt_state = optimizer.init(pi_theta_P)
