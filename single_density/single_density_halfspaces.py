@@ -146,6 +146,12 @@ def reinforce(key, pi_theta_P, optimizer, opt_state, n_iter, batch_size, lr):
     stats_reward = []
     stats_params = []
 
+    # evaluate the initial policy
+    key, key_rew_eval = jax.random.split(key)
+    stats_rewards_est_a_BA = pi_sample(key_rew_eval, pi_theta_P, shape=(1024, env_dim))
+    stats_rewards_est_B = jnp.apply_along_axis(r_smoothed, 1, stats_rewards_est_a_BA, env)
+    stats_reward.append(jnp.mean(stats_rewards_est_B))
+
     for _ in range(n_iter):
         key, pi_theta_P, opt_state, stats_step = reinforce_step(key, pi_theta_P, optimizer, opt_state, batch_size, lr)
         stats_reward.append(stats_step[0])
@@ -177,9 +183,9 @@ def log_rho_pdf_unnorm(a_A, pi_theta_P):
     return log_rho_val
 
 
-rej_sampling_M = 1e3
+rej_sampling_M = 1e2
 
-#@partial(jax.jit, static_argnames=('optimizer', 'proposal_size', 'batch_size'))
+@partial(jax.jit, static_argnames=('optimizer', 'proposal_size', 'batch_size'))
 def ISPG_step_rej(it, key, pi_theta_P, optimizer, opt_state, last_sample, proposal_size, batch_size):
     key, key_u, key_sample, key_infer, key_r, key_Z, key_vre, key_bias = jax.random.split(key, num=8)
 
@@ -237,10 +243,10 @@ def ISPG_step_rej(it, key, pi_theta_P, optimizer, opt_state, last_sample, propos
     bias_est_P = ISPG_update_P - REINFORCE_bias_est_P
     bias_est   = jnp.max(jnp.abs(bias_est_P))
 
+
     # update the policy pi parameters
     updates_P, opt_state = optimizer.update(ISPG_update_P, opt_state)
-    pi_theta_P = optax.apply_updates(pi_theta_P, -updates_P)
-    #    pi_theta_P = pi_theta_P - lr * ISPG_update_P
+    pi_theta_P = optax.apply_updates(pi_theta_P, updates_P)
 
     stats_rewards_est_a_BA = pi_sample(key_r, pi_theta_P, shape=(1024, env_dim))
     stats_rewards_est_B = jnp.apply_along_axis(r_smoothed, 1, stats_rewards_est_a_BA, env)
@@ -259,12 +265,17 @@ def ISPG_rej(key, pi_theta_P, optimizer, opt_state, n_iter, proposal_size, batch
     stats_acc    = []
     stats_bias   = []
 
-    key, key_sample = jax.random.split(key)
+    key, key_sample, key_rew_eval = jax.random.split(key, num=3)
     sample = pi_sample(key_sample, pi_theta_P, (batch_size, env_dim))
+
+    # evaluate the initial policy
+    stats_rewards_est_a_BA = pi_sample(key_rew_eval, pi_theta_P, shape=(1024, env_dim))
+    stats_rewards_est_B = jnp.apply_along_axis(r_smoothed, 1, stats_rewards_est_a_BA, env)
+    stats_reward.append(jnp.mean(stats_rewards_est_B))
 
     for it in range(n_iter):
         if it > 0:
-            print('it={},  rew={:>2.3f},    variance reduction ~ {:>14.0f},      bias ~ {:>6.4f},    lr*mag={:>6.4f},    acc={:>3.2f}'.format(it,
+            print('it={:>4},  rew={:>2.3f},    variance reduction ~ {:>20.0f},      bias ~ {:>6.4f},    lr*mag={:>6.4f},    acc={:>3.2f}'.format(it,
                 stats_reward[-1],
                 stats_vre[-1],
                 stats_bias[-1],
@@ -285,7 +296,8 @@ def ISPG_rej(key, pi_theta_P, optimizer, opt_state, n_iter, proposal_size, batch
         stats_acc.append(stats_step[4])
         stats_bias.append(stats_step[5])
         if stats_acc[-1] < 1.0:
-            print('[ISPG_rej] Insufficiently many accepted samples -- early exit')
+            print('[ISPG_rej] Insufficiently many accepted samples --- early exit')
+            print(stats_acc[-1] * batch_size)
             break
         if jnp.isnan(stats_step[1]):
             print(f'[ISPG_rej] NaN on iteration {it} --- early exit')
@@ -385,8 +397,13 @@ def ISPG_hmc(key, pi_theta_P, optimizer, opt_state, n_iter, batch_size, lr):
     stats_mag    = []
     stats_acc    = []
 
-    key, key_sample = jax.random.split(key)
+    key, key_sample, key_rew_eval = jax.random.split(key, num=3)
     sample = pi_sample(key_sample, pi_theta_P, (batch_size, env_dim))
+
+    # evaluate the initial policy
+    stats_rewards_est_a_BA = pi_sample(key_rew_eval, pi_theta_P, shape=(1024, env_dim))
+    stats_rewards_est_B = jnp.apply_along_axis(r_smoothed, 1, stats_rewards_est_a_BA, env)
+    stats_reward.append(jnp.mean(stats_rewards_est_B))
 
     for it in range(n_iter):
         print('it={},  variance reduction ~ {},   lr*mag={}'.format(it,
@@ -414,7 +431,7 @@ def ISPG_hmc(key, pi_theta_P, optimizer, opt_state, n_iter, batch_size, lr):
 
 
 # ==== Experiment config =====
-n_iter = 100
+n_iter = 500
 
 # Compare r vs r_smoothed at a point
 key_rng, key_a = jax.random.split(key_rng)
@@ -444,8 +461,8 @@ pi_theta_P = jnp.copy(pi_theta_P0)
 ISPG_num_chains = b_small
 ISPG_proposal_size = ISPG_num_chains * 128
 ISPG_lr = 1e2
-#optimizer = optax.adam(ISPG_lr)
 optimizer = optax.sgd(ISPG_lr)
+#optimizer = optax.adam(ISPG_lr)
 opt_state = optimizer.init(pi_theta_P)
 key_ISPG, pi_theta_P, _, stats_run_ISPG = ISPG_rej(
     key_ISPG, pi_theta_P, optimizer, opt_state, n_iter, ISPG_proposal_size, ISPG_num_chains, ISPG_lr)
@@ -465,9 +482,9 @@ PG_labels = [f'PG b={b} lr={lr}' for b, lr in zip(PG_b, PG_lr)]
 ISPG_label = f'ISPG b={ISPG_num_chains} lr={ISPG_lr}'
 
 for stats, label in zip(PG_stats, PG_labels):
-    ax.plot(range(n_iter), stats[0], label=label)
+    ax.plot(range(n_iter+1), stats[0], label=label)
 
-ax.plot(range(n_iter), stats_run_ISPG[0], label=ISPG_label)
+ax.plot(range(n_iter+1), stats_run_ISPG[0], label=ISPG_label)
 
 ax.set_title(f'Smoothed sum-of-half-spaces env. dim={env_dim}  smoothing_weight={env_smoothing_weight}')
 
